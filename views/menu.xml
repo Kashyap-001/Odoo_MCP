@@ -1,0 +1,135 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <!-- ==================== WINDOW ACTIONS ==================== -->
+
+    <!-- Action for Agents -->
+    <record id="action_mcp_agent" model="ir.actions.act_window">
+        <field name="name">Agents</field>
+        <field name="res_model">mcp.agent</field>
+        <field name="view_mode">list,form</field>
+    </record>
+
+    <!-- Action for Tools -->
+    <record id="action_mcp_tool" model="ir.actions.act_window">
+        <field name="name">Tools</field>
+        <field name="res_model">mcp.tool</field>
+        <field name="view_mode">list,form</field>
+    </record>
+
+    <!-- Action for Tool Sets -->
+    <record id="action_mcp_tool_set" model="ir.actions.act_window">
+        <field name="name">Tool Sets</field>
+        <field name="res_model">mcp.tool.set</field>
+        <field name="view_mode">list,form</field>
+    </record>
+
+    <!-- Action for Sessions -->
+    <record id="action_mcp_session" model="ir.actions.act_window">
+        <field name="name">Sessions</field>
+        <field name="res_model">mcp.session</field>
+        <field name="view_mode">list,form</field>
+    </record>
+
+    <!-- Action for Access Rules -->
+    <record id="action_mcp_access_rule" model="ir.actions.act_window">
+        <field name="name">Access Rules</field>
+        <field name="res_model">mcp.access.rule</field>
+        <field name="view_mode">list,form</field>
+    </record>
+
+    <!-- Action for Prompt Templates -->
+    <record id="action_mcp_prompt_template" model="ir.actions.act_window">
+        <field name="name">Prompt Templates</field>
+        <field name="res_model">mcp.prompt.template</field>
+        <field name="view_mode">list,form</field>
+    </record>
+
+    <!-- Action for Webhook Triggers -->
+    <record id="action_mcp_webhook_trigger" model="ir.actions.act_window">
+        <field name="name">Webhook Triggers</field>
+        <field name="res_model">mcp.webhook.trigger</field>
+        <field name="view_mode">list,form</field>
+    </record>
+
+    <!-- Action for External MCP Servers -->
+    <record id="action_mcp_external_server" model="ir.actions.act_window">
+        <field name="name">External MCP Servers</field>
+        <field name="res_model">mcp.external.server</field>
+        <field name="view_mode">list,form</field>
+    </record>
+
+    <!-- Action for Cost Entries -->
+    <record id="action_mcp_cost_entry" model="ir.actions.act_window">
+        <field name="name">Cost Entries</field>
+        <field name="res_model">mcp.cost.entry</field>
+        <field name="view_mode">list,form,pivot,graph</field>
+    </record>
+
+    <!-- Action for Tool Scan Wizard -->
+    <record id="action_mcp_tool_scan" model="ir.actions.act_window">
+        <field name="name">Scan Tools</field>
+        <field name="res_model">mcp.tool.scan.wizard</field>
+        <field name="view_mode">form</field>
+        <field name="target">new</field>
+    </record>
+
+    <!-- Action for Chat Wizard -->
+    <record id="action_mcp_chat" model="ir.actions.act_window">
+        <field name="name">Chat with Agent</field>
+        <field name="res_model">mcp.chat.wizard</field>
+        <field name="view_mode">form</field>
+        <field name="target">new</field>
+    </record>
+
+    <!-- ==================== MENU ITEMS ==================== -->
+
+    <!-- Root menu - AI Gateway -->
+    <menuitem id="menu_mcp_root" name="AI Gateway" sequence="100"/>
+
+    <!-- Agents menu item -->
+    <menuitem id="menu_mcp_agents" name="Agents" action="action_mcp_agent" parent="menu_mcp_root" sequence="5"/>
+
+    <!-- Chat menu item -->
+    <menuitem id="menu_mcp_chat" name="Chat" action="action_mcp_chat" parent="menu_mcp_root" sequence="10"/>
+
+    <!-- Tools submenu -->
+    <menuitem id="menu_mcp_tools" name="Tools" parent="menu_mcp_root" sequence="20"/>
+
+    <!-- Tools list -->
+    <menuitem id="menu_mcp_tool_list" name="Tools" action="action_mcp_tool" parent="menu_mcp_tools" sequence="10"/>
+
+    <!-- External MCP Servers -->
+    <menuitem id="menu_mcp_external_servers" name="External MCP Servers" action="action_mcp_external_server" parent="menu_mcp_tools" sequence="15"/>
+
+    <!-- Categories -->
+    <menuitem id="menu_mcp_tool_category_list" name="Categories" action="mcp_tool_category_action" parent="menu_mcp_tools" sequence="20"/>
+
+    <!-- Tool Sets -->
+    <menuitem id="menu_mcp_tool_set_list" name="Tool Sets" action="action_mcp_tool_set" parent="menu_mcp_tools" sequence="30"/>
+
+    <!-- Scan Tools -->
+    <menuitem id="menu_mcp_tool_scan" name="Scan Tools" action="action_mcp_tool_scan" parent="menu_mcp_tools" sequence="40"/>
+
+    <!-- Sessions menu item -->
+    <menuitem id="menu_mcp_sessions" name="Sessions" action="action_mcp_session" parent="menu_mcp_root" sequence="30"/>
+
+    <!-- Cost Analysis menu item -->
+    <menuitem id="menu_mcp_cost" name="Cost Analysis" action="action_mcp_cost_entry" parent="menu_mcp_root" sequence="40"/>
+
+    <!-- Configuration submenu -->
+    <menuitem id="menu_mcp_configuration" name="Configuration" parent="menu_mcp_root" sequence="100"/>
+
+    <!-- Access Rules -->
+    <menuitem id="menu_mcp_access_rules" name="Access Rules" action="action_mcp_access_rule" parent="menu_mcp_configuration" sequence="10"/>
+
+    <!-- Prompt Templates -->
+    <menuitem id="menu_mcp_prompt_templates" name="Prompt Templates" action="action_mcp_prompt_template" parent="menu_mcp_configuration" sequence="20"/>
+
+    <!-- Webhook Triggers -->
+    <menuitem id="menu_mcp_webhook_triggers" name="Webhook Triggers" action="action_mcp_webhook_trigger" parent="menu_mcp_configuration" sequence="30"/>
+
+    <!-- Issues (separate submenu) -->
+    <menuitem id="menu_mcp_issues" name="Issues" parent="menu_mcp_root" sequence="50"/>
+    <menuitem id="menu_mcp_issue_list" name="Issues" action="action_mcp_issue" parent="menu_mcp_issues" sequence="10"/>
+    <menuitem id="menu_mcp_issue_tags" name="Tags" action="action_mcp_issue_tag" parent="menu_mcp_issues" sequence="20"/>
+</odoo>

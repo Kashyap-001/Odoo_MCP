@@ -1,0 +1,96 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <!-- Tree View - List of all tools -->
+    <record id="view_mcp_tool_tree" model="ir.ui.view">
+        <field name="name">mcp.tool.tree</field>
+        <field name="model">mcp.tool</field>
+        <field name="arch" type="xml">
+            <list string="Tools">
+                <field name="name" />
+                <field name="display_name_label" />
+                <field name="category_id" />
+                <field name="tool_type" />
+                <field name="is_readonly" />
+                <field name="active" />
+            </list>
+        </field>
+    </record>
+
+    <!-- Form View - Create/Edit tool -->
+    <record id="view_mcp_tool_form" model="ir.ui.view">
+        <field name="name">mcp.tool.form</field>
+        <field name="model">mcp.tool</field>
+        <field name="arch" type="xml">
+            <form string="Tool">
+                <header>
+                    <button name="action_test_tool" type="object" string="Test Tool" class="btn-primary"/>
+                    <button name="action_test_all_tools" type="object" string="Test All Tools" class="btn-secondary"/>
+                </header>
+                <sheet>
+                    <group>
+                        <group>
+                            <field name="name" required="1" />
+                            <field name="display_name_label" />
+                            <field name="category_id" />
+                        </group>
+                        <group>
+                            <field name="tool_type" required="1" />
+                            <field name="active" />
+                        </group>
+                    </group>
+                    <field name="description" widget="html" nolabel="1" />
+
+                    <!-- Odoo tool configuration - shown only for odoo type -->
+                    <group invisible="tool_type != 'odoo'">
+                        <group string="Odoo Configuration">
+                            <field name="odoo_model" />
+                            <field name="odoo_method" />
+                            <field name="odoo_fields" />
+                        </group>
+                        <group>
+                            <field name="is_readonly" />
+                            <field name="requires_confirm" />
+                        </group>
+                    </group>
+
+                    <!-- External API configuration - shown only for external type -->
+                    <group invisible="tool_type != 'external'">
+                        <field name="endpoint_url" />
+                        <field name="auth_type" />
+                        <field name="auth_header_name" />
+                    </group>
+
+                    <!-- MCP Server configuration - shown only for mcp_server type -->
+                    <group invisible="tool_type != 'mcp_server'">
+                        <field name="mcp_server_url" />
+                    </group>
+
+                    <!-- JSON schema for tool input -->
+                    <field name="input_schema" widget="ace" options="{'mode': 'json'}" nolabel="1" />
+                </sheet>
+            </form>
+        </field>
+    </record>
+
+    <!-- Search View - Filter and search tools -->
+    <record id="view_mcp_tool_search" model="ir.ui.view">
+        <field name="name">mcp.tool.search</field>
+        <field name="model">mcp.tool</field>
+        <field name="arch" type="xml">
+            <search string="Search Tools">
+                <field name="name" />
+                <field name="category_id" />
+                <separator />
+                <filter name="readonly_tools" string="Read-Only" domain="[('is_readonly', '=', True)]" />
+                <filter name="active_tools" string="Active" domain="[('active', '=', True)]" />
+                <separator />
+                <filter name="odoo_tools" string="Odoo Tools" domain="[('tool_type', '=', 'odoo')]" />
+                <filter name="external_tools" string="External Tools" domain="[('tool_type', '=', 'external')]" />
+                <group expand="0" string="Group By">
+                    <filter name="group_category" string="Category" domain="[]" context="{'group_by': 'category_id'}" />
+                    <filter name="group_type" string="Type" domain="[]" context="{'group_by': 'tool_type'}" />
+                </group>
+            </search>
+        </field>
+    </record>
+</odoo>

@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <!-- Tree View - List of all tool sets -->
+    <record id="view_mcp_tool_set_tree" model="ir.ui.view">
+        <field name="name">mcp.tool.set.tree</field>
+        <field name="model">mcp.tool.set</field>
+        <field name="arch" type="xml">
+            <list string="Tool Sets">
+                <field name="name" />
+                <field name="tool_ids" widget="many2many_tags" />
+                <field name="active" />
+            </list>
+        </field>
+    </record>
+
+    <!-- Form View - Create/Edit tool set -->
+    <record id="view_mcp_tool_set_form" model="ir.ui.view">
+        <field name="name">mcp.tool.set.form</field>
+        <field name="model">mcp.tool.set</field>
+        <field name="arch" type="xml">
+            <form string="Tool Set">
+                <sheet>
+                    <group>
+                        <field name="name" required="1" />
+                        <field name="active" />
+                    </group>
+                    <field name="description" widget="html" nolabel="1" />
+                    <field name="tool_ids" widget="many2many" nolabel="1" />
+                </sheet>
+            </form>
+        </field>
+    </record>
+</odoo>

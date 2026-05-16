@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <!-- Tree View - List of all prompt templates -->
+    <record id="view_mcp_prompt_template_tree" model="ir.ui.view">
+        <field name="name">mcp.prompt.template.tree</field>
+        <field name="model">mcp.prompt.template</field>
+        <field name="arch" type="xml">
+            <list string="Prompt Templates">
+                <field name="name" />
+                <field name="category" />
+                <field name="active" />
+                <field name="content" widget="html" />
+            </list>
+        </field>
+    </record>
+
+    <!-- Form View - Create/Edit prompt template -->
+    <record id="view_mcp_prompt_template_form" model="ir.ui.view">
+        <field name="name">mcp.prompt.template.form</field>
+        <field name="model">mcp.prompt.template</field>
+        <field name="arch" type="xml">
+            <form string="Prompt Template">
+                <sheet>
+                    <group>
+                        <field name="name" required="1" />
+                        <field name="category" />
+                        <field name="active" />
+                    </group>
+                    <field name="description" widget="html" nolabel="1" />
+                    <field name="variables" placeholder="Comma-separated variables" />
+                    <field name="content" widget="html" nolabel="1" required="1" />
+                </sheet>
+            </form>
+        </field>
+    </record>
+</odoo>

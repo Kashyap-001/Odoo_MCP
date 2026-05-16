@@ -1,0 +1,88 @@
+<?xml version="1.0" encoding="utf-8"?>
+<templates>
+
+    <!-- MCP Chat Widget Main Component -->
+    <t t-name="mcp_gateway.ChatWidget">
+        <div class="mcp-chat-container">
+            <div class="mcp-chat-header">
+                <h3>
+                    <t t-esc="state.selectedAgent?.name or 'Select Agent'"/>
+                </h3>
+                <span class="mcp-status-badge" t-attf-class="mcp-status-{{ state.selectedAgent?.status }}">
+                    <t t-esc="state.selectedAgent?.status or 'offline'"/>
+                </span>
+            </div>
+
+            <div class="mcp-agent-selector" t-if="!state.selectedAgent">
+                <div class="oe_structure">
+                    <t t-foreach="state.agents" t-as="agent">
+                        <div class="mcp-agent-option" t-on-click="() => selectAgent(agent)">
+                            <div class="mcp-agent-avatar">
+                                <t t-esc="agent.name[0]"/>
+                            </div>
+                            <div class="mcp-agent-info">
+                                <div class="mcp-agent-name">
+                                    <t t-esc="agent.name"/>
+                                </div>
+                                <div class="mcp-agent-model">
+                                    <t t-esc="agent.model_name"/>
+                                </div>
+                            </div>
+                        </div>
+                    </t>
+                </div>
+            </div>
+
+            <div class="mcp-chat-history">
+                <t t-foreach="state.messages" t-as="msg">
+                    <t t-call="mcp_gateway.MessageBubble">
+                        <t t-set="message" t-value="msg"/>
+                    </t>
+                </t>
+                <div t-if="state.loading" class="mcp-user-msg">
+                    <span class="mcp-loading"></span>
+                    <span class="mcp-loading"></span>
+                    <span class="mcp-loading"></span>
+                </div>
+            </div>
+
+            <div class="mcp-input-area">
+                <textarea
+                    class="mcp-message-input"
+                    t-ref="messageInput"
+                    placeholder="Type your message..."
+                    t-on-keydown="onKeyDown"/>
+                <button
+                    class="mcp-send-btn"
+                    t-on-click="sendMessage"
+                    t-att-disabled="state.loading">
+                    Send
+                </button>
+                <div class="mcp-token-counter">
+                    Tokens: <t t-esc="state.totalTokens"/>
+                    <span class="mcp-cost-indicator" t-if="state.estimatedCost > 0">
+                        ($<t t-esc="state.estimatedCost.toFixed(4)"/>)
+                    </span>
+                </div>
+            </div>
+        </div>
+    </t>
+
+    <!-- Message Bubble Component -->
+    <t t-name="mcp_gateway.MessageBubble">
+        <div t-attf-class="mcp-{{ message.role }}-msg">
+            <t t-if="message.role === 'user'">
+                <strong>You:</strong>
+                <t t-esc="message.content"/>
+            </t>
+            <t t-elif="message.role === 'assistant'">
+                <strong>Agent:</strong>
+                <t t-esc="message.content"/>
+            </t>
+            <t t-elif="message.role === 'tool_call'">
+                🔧 <em><t t-esc="message.tool_name"/></em>
+            </t>
+        </div>
+    </t>
+
+</templates>

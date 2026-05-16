@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <data noupdate="1">
+
+        <!-- User Group — Basic access to chat and tools -->
+        <record id="group_mcp_user" model="res.groups">
+            <field name="name">AI Gateway User</field>
+            <field name="category_id" ref="base.module_category_tools"/>
+            <field name="comment">Basic access to chat with agents and use tools</field>
+        </record>
+
+        <!-- Manager Group — Configure agents, tools, rules -->
+        <record id="group_mcp_manager" model="res.groups">
+            <field name="name">AI Gateway Manager</field>
+            <field name="category_id" ref="base.module_category_tools"/>
+            <field name="implied_ids" eval="[(4, ref('group_mcp_user'))]"/>
+            <field name="comment">Configure agents, tools, and access rules</field>
+        </record>
+
+        <!-- Admin Group — Full access including provider config -->
+        <record id="group_mcp_admin" model="res.groups">
+            <field name="name">AI Gateway Administrator</field>
+            <field name="category_id" ref="base.module_category_tools"/>
+            <field name="implied_ids" eval="[(4, ref('group_mcp_manager'))]"/>
+            <field name="comment">Full access to AI Gateway including provider configuration</field>
+        </record>
+
+    </data>
+</odoo>

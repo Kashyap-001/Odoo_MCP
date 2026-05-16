@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <!-- Form View - Tool scan wizard for discovering Odoo models -->
+    <record id="view_mcp_tool_scan_wizard_form" model="ir.ui.view">
+        <field name="name">mcp.tool.scan.wizard.form</field>
+        <field name="model">mcp.tool.scan.wizard</field>
+        <field name="arch" type="xml">
+            <form string="Tool Scanner">
+                <sheet>
+                    <!-- Scan options -->
+                    <group string="Scan Options">
+                        <field name="module_filter" placeholder="Leave empty to scan all modules" />
+                    </group>
+
+                    <!-- Scanned models list with selection -->
+                    <field name="scanned_line_ids" nolabel="1">
+                        <list editable="top">
+                            <field name="model_name" />
+                            <field name="method" />
+                            <field name="model_description" />
+                            <field name="already_exists" readonly="1" />
+                            <field name="selected" readonly="already_exists" />
+                        </list>
+                    </field>
+                </sheet>
+
+                <!-- Footer buttons -->
+                <footer>
+                    <button name="action_scan" type="object" string="Scan Modules" class="btn-primary" />
+                    <button name="action_create_selected" type="object" string="Create Selected Tools" />
+                    <button string="Close" class="btn-secondary" special="cancel" />
+                </footer>
+            </form>
+        </field>
+    </record>
+</odoo>

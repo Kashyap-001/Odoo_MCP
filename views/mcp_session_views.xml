@@ -1,0 +1,78 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <!-- Tree View - List of all sessions -->
+    <record id="view_mcp_session_tree" model="ir.ui.view">
+        <field name="name">mcp.session.tree</field>
+        <field name="model">mcp.session</field>
+        <field name="arch" type="xml">
+            <list string="Sessions" decoration-success="state=='done'" decoration-danger="state=='error'">
+                <field name="name" />
+                <field name="agent_id" />
+                <field name="user_id" />
+                <field name="state" />
+                <field name="input_tokens" />
+                <field name="output_tokens" />
+                <field name="estimated_cost_usd" />
+                <field name="create_date" />
+            </list>
+        </field>
+    </record>
+
+    <!-- Form View - Session with chatter for chat -->
+    <record id="view_mcp_session_form" model="ir.ui.view">
+        <field name="name">mcp.session.form</field>
+        <field name="model">mcp.session</field>
+        <field name="arch" type="xml">
+            <form string="Session">
+                <sheet>
+                    <!-- Session details -->
+                    <group>
+                        <group>
+                            <field name="name" />
+                            <field name="agent_id" />
+                            <field name="user_id" />
+                        </group>
+                        <group>
+                            <field name="state" />
+                            <field name="source" />
+                            <field name="input_tokens" />
+                            <field name="output_tokens" />
+                            <field name="estimated_cost_usd" />
+                        </group>
+                    </group>
+
+                    <!-- Error message - shown only when state is error -->
+                    <group>
+                        <field name="error_message" invisible="state != 'error'" />
+                    </group>
+                    <!-- Chatter for conversation -->
+                    <chatter />
+                </sheet>
+            </form>
+        </field>
+    </record>
+
+    <!-- Search View - Filter and search sessions -->
+    <record id="view_mcp_session_search" model="ir.ui.view">
+        <field name="name">mcp.session.search</field>
+        <field name="model">mcp.session</field>
+        <field name="arch" type="xml">
+            <search string="Search Sessions">
+                <field name="name" string="Session Name" />
+                <field name="agent_id" string="Agent" />
+                <field name="user_id" string="User" />
+                <separator />
+                <filter name="done_sessions" string="Completed" domain="[('state', '=', 'done')]" />
+                <filter name="error_sessions" string="Errors" domain="[('state', '=', 'error')]" />
+                <separator />
+                <filter name="today_sessions" string="Today" domain="[('create_date', '&gt;=', datetime.datetime.combine(datetime.date.today(), datetime.time(0, 0, 0)))]" />
+                <separator />
+                <group expand="0" string="Group By">
+                    <filter name="group_agent" string="Agent" domain="[]" context="{'group_by': 'agent_id'}" />
+                    <filter name="group_user" string="User" domain="[]" context="{'group_by': 'user_id'}" />
+                    <filter name="group_state" string="State" domain="[]" context="{'group_by': 'state'}" />
+                </group>
+            </search>
+        </field>
+    </record>
+</odoo>

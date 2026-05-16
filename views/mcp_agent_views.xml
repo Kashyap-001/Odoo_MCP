@@ -1,0 +1,130 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <!-- Tree View - List of all agents -->
+    <record id="view_mcp_agent_tree" model="ir.ui.view">
+        <field name="name">mcp.agent.tree</field>
+        <field name="model">mcp.agent</field>
+        <field name="arch" type="xml">
+            <list string="Agents" decoration-success="status=='online'" decoration-warning="status=='unconfigured'" decoration-danger="status=='error'">
+                <field name="name"/>
+                <field name="provider"/>
+                <field name="model_name"/>
+                <field name="status" widget="badge" decoration-success="status=='online'" decoration-warning="status=='unconfigured'" decoration-danger="status=='error'"/>
+                <field name="session_count"/>
+                <field name="last_used"/>
+                <field name="active" widget="boolean_toggle"/>
+            </list>
+        </field>
+    </record>
+
+    <!-- Form View - Create/Edit agent -->
+    <record id="view_mcp_agent_form" model="ir.ui.view">
+        <field name="name">mcp.agent.form</field>
+        <field name="model">mcp.agent</field>
+        <field name="arch" type="xml">
+            <form string="Agent">
+                <header>
+                    <button name="action_test_connection" type="object" string="Test Connection" class="btn-primary"/>
+                    <button name="action_refresh_models" type="object" string="Refresh Models" class="btn-secondary"/>
+                    <field name="status" widget="badge" decoration-success="status=='online'" decoration-warning="status=='unconfigured'" decoration-danger="status=='error'"/>
+                </header>
+                <sheet>
+                    <!-- Title and basic info -->
+                    <group colspan="2" col="2">
+                        <field name="name" placeholder="e.g. Sales Assistant"/>
+                        <field name="active"/>
+                        <field name="provider"/>
+                        <field name="color" widget="color_picker"/>
+                    </group>
+
+                    <group string="Description" colspan="2" col="2">
+                        <field name="description" placeholder="What this agent specializes in..." nolabel="1" colspan="2"/>
+                    </group>
+
+                    <!-- Provider Settings -->
+                    <group string="Provider Configuration" colspan="2" col="2">
+                        <field name="model_name"/>
+                        <field name="model_selection" string="Select from Available Models" placeholder="Pick a model..."/>
+                        <field name="api_base_url" placeholder="Optional: Override default API URL"/>
+                        <field name="api_key" password="1" colspan="2"/>
+                    </group>
+
+                    <!-- LLM Parameters -->
+                    <group string="LLM Parameters" colspan="2" col="2">
+                        <field name="temperature"/>
+                        <field name="top_p"/>
+                        <field name="max_tokens"/>
+                    </group>
+
+                    <!-- Access Control -->
+                    <group string="Access Control" colspan="2" col="2">
+                        <field name="allowed_group_ids" widget="many2many_tags" placeholder="Select allowed groups..." colspan="2"/>
+                    </group>
+
+                    <!-- Notebook tabs -->
+                    <notebook colspan="2">
+                        <page name="system_prompt" string="System Prompt">
+                            <group colspan="2" col="1">
+                                <field name="system_prompt" placeholder="Instructions that define agent behavior..." nolabel="1" colspan="1"/>
+                            </group>
+                        </page>
+                        <page name="tools" string="Tools">
+                            <group colspan="2" col="2">
+                                <group string="Tool Sets" colspan="1">
+                                    <field name="tool_set_ids" widget="many2many_tags" nolabel="1"/>
+                                </group>
+                                <group string="Direct Tools" colspan="1">
+                                    <field name="tool_ids" widget="many2many_tags" nolabel="1"/>
+                                </group>
+                            </group>
+                            <separator string="Effective Tools (Computed)"/>
+                            <field name="effective_tool_ids" readonly="1" options="{'no_quick_create': True}"/>
+                        </page>
+                        <page name="costs" string="Cost Settings">
+                            <group colspan="2" col="2">
+                                <field name="cost_per_1k_input"/>
+                                <field name="cost_per_1k_output"/>
+                            </group>
+                        </page>
+                        <page name="memory" string="Memory">
+                            <group colspan="2" col="2">
+                                <field name="enable_memory"/>
+                                <field name="context_fields" placeholder='["name", "email"]'/>
+                            </group>
+                        </page>
+                        <!-- Notes page commented out - uncomment after module upgrade syncs the model
+                        <page name="notes" string="Notes">
+                            <field name="notes"/>
+                        </page>
+-->
+                    </notebook>
+
+                <!-- Chatter section for messages and activities -->
+                <chatter />
+                </sheet>
+
+            </form>
+        </field>
+    </record>
+
+    <!-- Search View - Filter and search agents -->
+    <record id="view_mcp_agent_search" model="ir.ui.view">
+        <field name="name">mcp.agent.search</field>
+        <field name="model">mcp.agent</field>
+        <field name="arch" type="xml">
+            <search string="Search Agents">
+                <field name="name" string="Agent Name"/>
+                <field name="provider" string="Provider"/>
+                <field name="model_name" string="Model"/>
+                <field name="description"/>
+                <separator/>
+                <filter name="active_agents" string="Active" domain="[('active', '=', True)]"/>
+                <filter name="inactive_agents" string="Inactive" domain="[('active', '=', False)]"/>
+                <group expand="0" string="Group By">
+                    <filter string="Provider" name="group_provider" domain="[]" context="{'group_by': 'provider'}"/>
+                    <filter string="Status" name="group_status" domain="[]" context="{'group_by': 'status'}"/>
+                </group>
+            </search>
+        </field>
+    </record>
+</odoo>

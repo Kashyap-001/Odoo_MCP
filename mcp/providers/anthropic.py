@@ -1,0 +1,215 @@
+"""
+mcp_gateway/mcp/providers/anthropic.py
+
+Anthropic Claude API adapter using official anthropic Python SDK.
+
+Key classes:
+  AnthropicAdapter — Adapter for Anthropic's Claude models
+
+Dependencies:
+  - anthropic package (pip install anthropic)
+  - base.AbstractProvider
+
+Developer notes:
+  - Uses official Anthropic SDK for reliable API calls
+  - SDK handles authentication and error handling
+  - Tool format: Anthropic tool_use blocks in content array
+  - Models: claude-opus, claude-sonnet-4-6, claude-haiku
+"""
+
+import logging
+from .base import AbstractProvider
+from odoo import _
+from odoo.exceptions import UserError
+
+_logger = logging.getLogger(__name__)
+
+
+class AnthropicAdapter(AbstractProvider):
+    """
+    Anthropic Claude API adapter using official SDK.
+
+    Implements provider interface for Anthropic's Claude models.
+    Supports tool_use blocks for function calling.
+
+    Example:
+        agent = env['mcp.agent'].search([('provider','=','anthropic')], limit=1)
+        provider = AnthropicAdapter(env)
+        result = provider.call(agent, messages, tool_specs)
+    """
+
+    def build_headers(self, agent) -> dict:
+        """
+        Build headers - not needed with SDK as it handles auth internally.
+
+        Args:
+            agent: mcp.agent record
+
+        Returns:
+            dict: Minimal headers
+        """
+        return {
+            'Content-Type': 'application/json',
+        }
+
+    def build_payload(self, messages: list, tool_specs: list, agent) -> dict:
+        """
+        Build request for Anthropic API using SDK format.
+
+        Converts generic messages/tools to Anthropic SDK format.
+
+        Args:
+            messages: Message history
+            tool_specs: Tool definitions
+            agent: mcp.agent with LLM parameters
+
+        Returns:
+            dict: Request payload for SDK
+        """
+        # Build tools array in Anthropic format
+        tools = []
+        for spec in tool_specs:
+            tools.append({
+                'name': spec['name'],
+                'description': spec['description'],
+                'input_schema': spec.get('input_schema', {}),
+            })
+
+        # Build messages - filter out system prompt (handled separately by SDK)
+        sdk_messages = []
+        for msg in messages:
+            if msg['role'] != 'system':
+                sdk_messages.append({
+                    'role': msg['role'],
+                    'content': msg['content'],
+                })
+
+        # Extract system message from messages parameter (may include datetime injection)
+        system_message = ''
+        for msg in messages:
+            if msg.get('role') == 'system':
+                system_message = msg.get('content', '')
+                break
+
+        return {
+            'model': agent.model_name,
+            'max_tokens': agent.max_tokens,
+            'temperature': agent.temperature,
+            'top_p': agent.top_p,
+            'system': system_message or agent.system_prompt or '',
+            'messages': sdk_messages,
+            'tools': tools if tools else None,
+        }
+
+    def parse_response(self, raw_json: dict) -> dict:
+        """
+        Parse Anthropic SDK response.
+
+        Extracts text, tool calls, and token usage from response.
+
+        Args:
+            raw_json: Full response from SDK
+
+        Returns:
+            dict: Standardized response with text, tool_calls, tokens
+        """
+        try:
+            text = None
+            tool_calls = []
+            stop_reason = raw_json.get('stop_reason', 'unknown')
+
+            # Extract text and tool calls from content array
+            for content in raw_json.get('content', []):
+                if hasattr(content, 'type'):
+                    if content.type == 'text':
+                        text = content.text
+                    elif content.type == 'tool_use':
+                        tool_calls.append({
+                            'id': content.id,
+                            'name': content.name,
+                            'arguments': content.input if hasattr(content, 'input') else {},
+                        })
+                elif isinstance(content, dict):
+                    if content.get('type') == 'text':
+                        text = content.get('text')
+                    elif content.get('type') == 'tool_use':
+                        tool_calls.append({
+                            'id': content.get('id'),
+                            'name': content.get('name'),
+                            'arguments': content.get('input', {}),
+                        })
+
+            # Get usage
+            usage = raw_json.get('usage', {})
+            input_tokens = usage.get('input_tokens', 0) if hasattr(usage, 'get') else 0
+            output_tokens = usage.get('output_tokens', 0) if hasattr(usage, 'get') else 0
+
+            return {
+                'text': text,
+                'stop_reason': stop_reason,
+                'tool_calls': tool_calls,
+                'input_tokens': input_tokens,
+                'output_tokens': output_tokens,
+            }
+        except Exception as e:
+            _logger.error('Anthropic response parse error: %s', str(e))
+            raise UserError(_('Failed to parse Anthropic response: %s') % str(e))
+
+    def call(self, agent, messages: list, tool_specs: list) -> dict:
+        """
+        Make an API call using Anthropic SDK.
+
+        Args:
+            agent: mcp.agent record
+            messages: Message history
+            tool_specs: Tool specifications
+
+        Returns:
+            dict: Standardized response
+        """
+        try:
+            import anthropic
+
+            api_key = agent._decrypt_api_key()
+            client = anthropic.Anthropic(api_key=api_key)
+
+            payload = self.build_payload(messages, tool_specs, agent)
+
+            _logger.info('Calling Anthropic SDK with model: %s', payload.get('model'))
+
+            response = client.messages.create(**payload)
+
+            return self.parse_response(response)
+
+        except anthropic.AuthenticationError as e:
+            _logger.error('Anthropic authentication failed: %s', str(e))
+            raise UserError(_('Invalid Anthropic API key. Please check your API key.'))
+        except anthropic.RateLimitError as e:
+            _logger.error('Anthropic rate limit exceeded: %s', str(e))
+            raise UserError(_('Anthropic rate limit exceeded. Please try again later.'))
+        except anthropic.APIConnectionError as e:
+            _logger.error('Anthropic connection error: %s', str(e))
+            raise UserError(_('Failed to connect to Anthropic API. Check your internet connection.'))
+        except Exception as e:
+            _logger.error('Anthropic call failed: %s', str(e))
+            raise UserError(_('Anthropic API error: %s') % str(e))
+
+    def get_available_models(self, agent) -> list:
+        """
+        Fetch available Claude models from Anthropic.
+
+        Returns known latest models.
+
+        Args:
+            agent: mcp.agent record (for consistency)
+
+        Returns:
+            list: Available model IDs
+        """
+        # Anthropic SDK doesn't have a models list endpoint, return known models
+        return [
+            'claude-opus-4-1',
+            'claude-sonnet-4-6',
+            'claude-haiku-3',
+            'claude-3-5-sonnet-20241022',
+        ]

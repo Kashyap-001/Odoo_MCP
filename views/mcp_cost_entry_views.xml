@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <!-- Tree View - List of all cost entries -->
+    <record id="view_mcp_cost_entry_tree" model="ir.ui.view">
+        <field name="name">mcp.cost.entry.tree</field>
+        <field name="model">mcp.cost.entry</field>
+        <field name="arch" type="xml">
+            <list string="Cost Entries" decoration-warning="total_cost_usd &gt; 1" decoration-danger="total_cost_usd &gt; 10">
+                <field name="session_id" />
+                <field name="input_tokens" />
+                <field name="output_tokens" />
+                <field name="total_cost_usd" sum="Total Cost" />
+                <field name="create_date" />
+            </list>
+        </field>
+    </record>
+
+    <!-- Graph View - Bar chart for cost analysis -->
+    <record id="view_mcp_cost_entry_graph" model="ir.ui.view">
+        <field name="name">mcp.cost.entry.graph</field>
+        <field name="model">mcp.cost.entry</field>
+        <field name="arch" type="xml">
+            <graph type="bar" string="Cost Analysis">
+                <field name="create_date" interval="day" type="row"/>
+                <field name="total_cost_usd" type="measure"/>
+            </graph>
+        </field>
+    </record>
+
+    <!-- Pivot View - Pivot table for cost breakdown -->
+    <record id="view_mcp_cost_entry_pivot" model="ir.ui.view">
+        <field name="name">mcp.cost.entry.pivot</field>
+        <field name="model">mcp.cost.entry</field>
+        <field name="arch" type="xml">
+            <pivot string="Cost Breakdown">
+                <field name="session_id" type="row" />
+                <field name="total_cost_usd" type="measure" />
+            </pivot>
+        </field>
+    </record>
+</odoo>

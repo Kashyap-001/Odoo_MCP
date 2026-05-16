@@ -1,0 +1,95 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <!-- Tree View - List of external MCP servers -->
+    <record id="view_mcp_external_server_tree" model="ir.ui.view">
+        <field name="name">mcp.external.server.tree</field>
+        <field name="model">mcp.external.server</field>
+        <field name="arch" type="xml">
+            <list string="External MCP Servers" decoration-success="active" decoration-warning="not active">
+                <field name="name"/>
+                <field name="server_type"/>
+                <field name="description"/>
+                <field name="tool_count"/>
+                <field name="last_refresh"/>
+                <field name="active" widget="boolean_toggle"/>
+            </list>
+        </field>
+    </record>
+
+    <!-- Form View - Create/Edit external server -->
+    <record id="view_mcp_external_server_form" model="ir.ui.view">
+        <field name="name">mcp.external.server.form</field>
+        <field name="model">mcp.external.server</field>
+        <field name="arch" type="xml">
+            <form string="External MCP Server">
+                <header>
+                    <button name="test_connection" type="object" string="Test Connection" class="btn-primary"/>
+                    <button name="refresh_tools" type="object" string="Refresh Tools" class="btn-secondary"/>
+                    <field name="active" widget="boolean_toggle"/>
+                </header>
+                <sheet>
+                    <group colspan="2" col="2">
+                        <field name="name"/>
+                        <field name="description" placeholder="What this MCP server provides..." nolabel="1" colspan="2"/>
+                    </group>
+
+                    <group string="Connection" colspan="2" col="2">
+                        <field name="server_type"/>
+                        <field name="command" invisible="server_type != 'stdio'" placeholder='python'/>
+                        <field name="args" invisible="server_type != 'stdio'" placeholder='["--arg1", "value"]'/>
+                        <field name="url" invisible="server_type != 'http'" placeholder="http://localhost:8080/mcp"/>
+                        <field name="env_vars" invisible="server_type != 'stdio'" placeholder='{"API_KEY": "xxx"}'/>
+                    </group>
+
+                    <group string="Authentication" colspan="2" col="2">
+                        <field name="auth_type"/>
+                        <field name="auth_value" password="1" colspan="2"
+                               invisible="auth_type == 'none'"
+                               required="auth_type != 'none'"/>
+                    </group>
+
+                    <group string="Status" colspan="2" col="2">
+                        <field name="last_refresh" readonly="1"/>
+                        <field name="tool_count" readonly="1"/>
+                    </group>
+                </sheet>
+            </form>
+        </field>
+    </record>
+
+    <!-- Search View -->
+    <record id="view_mcp_external_server_search" model="ir.ui.view">
+        <field name="name">mcp.external.server.search</field>
+        <field name="model">mcp.external.server</field>
+        <field name="arch" type="xml">
+            <search string="Search External MCP Servers">
+                <field name="name"/>
+                <field name="description"/>
+                <field name="server_type"/>
+                <separator/>
+                <filter name="active_servers" string="Active" domain="[('active', '=', True)]"/>
+                <filter name="inactive_servers" string="Inactive" domain="[('active', '=', False)]"/>
+                <group expand="0" string="Group By">
+                    <filter string="Transport Type" name="group_type" domain="[]" context="{'group_by': 'server_type'}"/>
+                </group>
+            </search>
+        </field>
+    </record>
+
+    <!-- Action -->
+    <record id="action_mcp_external_server" model="ir.actions.act_window">
+        <field name="name">External MCP Servers</field>
+        <field name="res_model">mcp.external.server</field>
+        <field name="view_mode">list,form</field>
+        <field name="help" type="html">
+            <p class="oe_view_nocontent_create">
+                Click to add an external MCP server.
+            </p>
+            <p>
+                External MCP servers provide additional tools that can be used
+                alongside your local Odoo tools. Examples include WhatsApp MCP,
+                YouTube MCP, and other MCP-compatible services.
+            </p>
+        </field>
+    </record>
+</odoo>
