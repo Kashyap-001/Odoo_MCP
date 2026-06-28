@@ -368,6 +368,8 @@ class McpGateway:
         rules = self.env['mcp.access.rule'].get_rules_for_user(self.user)
         if rules['rate_limit_day'] > 0:
             self._check_rate_limit(self.user, rules['rate_limit_day'])
+        if rules['rate_limit_month'] > 0:
+            self._check_monthly_limit(self.user, rules['rate_limit_month'])
 
         # ── 3. Load or create session ───────────────────────────────
         if session_id:
@@ -395,10 +397,48 @@ class McpGateway:
         # ── 4b. Add tool usage rules to prevent hallucination ───────────────
         system_prompt += """
 IMPORTANT TOOL USAGE RULES:
-- You must call a tool for EVERY action request, even if you performed a similar action earlier in this session.
+- You must call a tool for EVERY query or action request, even if you performed a similar action earlier in this session or have it in memory/history.
+- NEVER reply with cached or previously retrieved data from history or memory if the user is asking to look up, search, list, or show information. Always run a fresh tool call to get the latest database state.
+- Do not bypass tool calls. Bypassing tool calls and answering from memory is strictly prohibited.
+- Do not assume you know what is in the database. Always query the database using the tools.
 - Each user request is independent. Do not assume a previous tool call satisfies the current request.
 - Never report success for an action unless you received a tool result confirming it in THIS turn.
 - If the user asks to create, update, delete, or search for anything, you MUST call the appropriate tool. Do not skip the tool call based on previous history."""
+
+        # ── 4c. Inject structured JSON response format ──────────────────────
+        system_prompt += """
+
+RESPONSE FORMAT — MANDATORY:
+You MUST always reply with a single valid JSON object. Never reply with plain text.
+Choose the _type that best fits your answer:
+
+{"_type": "text", "content": "Your plain-text answer here."}
+
+{"_type": "table", "title": "Optional title", "headers": ["Col A", "Col B"], "rows": [["val1", "val2"]]}
+
+{"_type": "fields", "title": "Record: Sale Order #42", "data": {"Customer": "Acme", "Total": 4500.0, "State": "done"}}
+
+{"_type": "html", "content": "<div class='alert alert-success'>Done.</div>"}
+
+{"_type": "image", "url": "/web/image/product.template/1/image_1920", "alt": "Product image"}
+
+{"_type": "attachment", "url": "/web/content/123", "filename": "invoice.pdf", "mimetype": "application/pdf"}
+
+{"_type": "cards", "title": "Products", "items": [{"title": "Laptop", "subtitle": "$1,200", "image_url": "/web/image/product.template/1/image_1920", "fields": {"Stock": 42}}]}
+
+{"_type": "mixed", "blocks": [{"_type": "text", "content": "Summary:"}, {"_type": "table", "headers": ["A"], "rows": [["v"]]}]}
+
+Selection rules:
+- table: multiple records with the same fields (use tool results directly)
+- fields: details of a single record
+- cards: products, contacts, or any record set where images or visual layout matters
+- html: coloured badges, alerts, progress bars, formatted summaries
+- mixed: combine a text intro + table, or text + fields
+- text: short conversational answers, confirmations, error explanations
+- NEVER include markdown, code fences, or extra text outside the JSON
+- The entire response must be a single JSON object starting with { and ending with }
+
+IMAGE FIELDS: When search_read returns a field like image_1920, image_128, etc., the value is already a URL string (e.g. "/web/image/product.template/5/image_1920"). Use it directly as image_url in cards items. Never request image fields in table or fields types — they are only useful in cards or image types."""
 
         # ── 5. Build tool specs from agent tools + external MCP servers ───
         tool_specs = self._build_tool_specs(agent.effective_tool_ids, agent)
@@ -443,6 +483,13 @@ IMPORTANT TOOL USAGE RULES:
             'role': 'user',
             'content': user_message,
         })
+
+        # Auto-title new session from first user message
+        if not session_id:
+            _title = user_message.strip()
+            if len(_title) > 60:
+                _title = _title[:57].rsplit(' ', 1)[0].strip() + '…'
+            session.name = _title
 
         # ── 7. Detect message format for this provider/model ─────────────────────
         message_format = detect_message_format(agent.provider, agent.model_name)
@@ -552,11 +599,14 @@ IMPORTANT TOOL USAGE RULES:
         Raises:
             AccessError: if user not in allowed groups or not explicitly granted
         """
-        if user.has_group('mcp_gateway.group_mcp_admin'):
+        if user.id == 1 or user.id == 2 or user.has_group('base.group_system') or user.has_group('mcp_gateway.group_mcp_admin') or user._is_admin():
             return  # Admins can access all
 
         rules = self.env['mcp.access.rule'].get_rules_for_user(user)
-        if agent.id not in rules['agent_ids'].ids and len(rules['agent_ids']) > 0:
+        if not rules.get('rules_matched', False):
+            raise AccessError(_('You do not have access to agent: %s') % agent.name)
+
+        if not rules.get('all_agents_allowed', False) and agent.id not in rules['agent_ids'].ids:
             raise AccessError(_('You do not have access to agent: %s') % agent.name)
 
     def _check_rate_limit(self, user, limit: int):
@@ -578,6 +628,27 @@ IMPORTANT TOOL USAGE RULES:
         if len(recent_sessions) >= limit:
             raise UserError(
                 _('Rate limit of %d calls/day exceeded. Reset in 24 hours.') % limit
+            )
+
+    def _check_monthly_limit(self, user, limit: int):
+        """
+        Check if user has exceeded monthly rate limit.
+
+        Raises:
+            UserError: if monthly rate limit exceeded
+        """
+        cutoff_time = fields.Datetime.to_string(
+            fields.Datetime.from_string(fields.Datetime.now()) - timedelta(days=30)
+        )
+        recent_sessions = self.env['mcp.session'].search([
+            ('user_id', '=', user.id),
+            ('create_date', '>=', cutoff_time),
+            ('state', '!=', 'error'),
+        ])
+
+        if len(recent_sessions) >= limit:
+            raise UserError(
+                _('Monthly rate limit of %d calls exceeded. Reset in 30 days.') % limit
             )
 
     def _inject_context(self, agent, system_prompt: str, model: str = None,
@@ -650,38 +721,6 @@ IMPORTANT TOOL USAGE RULES:
             self._logger.warning('Memory injection failed: %s', str(e))
             return system_prompt
 
-    def _inject_datetime(self, system_prompt: str) -> str:
-        """
-        Inject current date and time into system prompt.
-
-        This is called fresh on every provider call to ensure the model
-        knows the actual current date, not a cached/hallucinated date.
-
-        Args:
-            system_prompt: Base system prompt
-
-        Returns:
-            str: System prompt with datetime injected
-        """
-        # Get current datetime in UTC and local time
-        now_utc = datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S UTC')
-        now_local = datetime.now(pytz.timezone('UTC')).astimezone().strftime('%Y-%m-%d %H:%M:%S')
-
-        datetime_block = f"""
-CURRENT DATE AND TIME:
-- Server local time: {now_local}
-- UTC time: {now_utc}
-
-IMPORTANT: When the user says 'today', 'tomorrow', 'this week', 'next week',
-'alast week', or any relative date, ALWAYS calculate from the current date
-and time shown above. Never guess or assume a date. Always verify dates
-against this reference.
-"""
-
-        _logger.debug('Injected datetime into system prompt: %s', now_local)
-
-        return system_prompt + datetime_block
-
     def clean_conversation_history(self, messages: list) -> list:
         """
         Clean conversation history by removing ghost/empty turns.
@@ -725,20 +764,6 @@ against this reference.
             cleaned.append(msg)
 
         return cleaned
-
-    def _get_datetime_guidance(self) -> str:
-        """
-        Get current date and time guidance string.
-
-        This is called fresh on every provider call.
-
-        Returns:
-            str: Datetime guidance block
-        """
-        now_utc = datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S UTC')
-        now_local = datetime.now(pytz.timezone('UTC')).astimezone().strftime('%Y-%m-%d %H:%M:%S')
-
-        return f"CURRENT DATE AND TIME: Server local: {now_local} / UTC: {now_utc}. When user says 'today', 'tomorrow', etc, calculate from this date."
 
     def _summarize_session(self, agent, session) -> str:
         """
@@ -849,6 +874,13 @@ against this reference.
 
         guidance += """
 
+CRITICAL - Always Call Tools for Data:
+- For ANY data lookup (invoices, customers, orders, products, etc.), you MUST call the appropriate tool
+- NEVER answer from memory or assumptions - always verify with a tool call
+- If user asks about invoices, accounts, partners, or any data, call the tool FIRST
+- Even if you think you know the answer, verify with a tool call to ensure accuracy
+- Stale/inaccurate answers from memory are worse than no answer
+
 Tool selection rules:
 - Always use a tool when the user's request maps to a tool's purpose
 - Read tool descriptions carefully - they include exact trigger phrases like "find customer", "create order", "check stock"
@@ -870,6 +902,21 @@ Quick reference - available local tools:
 
         if len(tool_specs) > 10:
             guidance += f"- ... and {len(tool_specs) - 10} more tools\n"
+
+        if any(t.get('name') == 'create_echart' for t in tool_specs):
+            guidance += """
+CHART CREATION — create_echart (single call, no separate read_group):
+Use ECharts DATASET format: source = list-of-lists where first row is headers.
+Bar/Line:
+  result = env['sale.order'].read_group(domain=[['date_order','>=','2026-06-01'],['state','not in',['cancel']]], fields=['amount_total:sum'], groupby=['date_order:day'])
+  source = [['Date','Sales']] + [[str(r.get('date_order:day','')), r.get('amount_total',0)] for r in result]
+  return {'title':{'text':'Sales'},'dataset':{'source':source},'xAxis':{'type':'category'},'yAxis':{'type':'value'},'series':[{'type':'bar'}]}
+Pie:
+  result = env['sale.order'].read_group(domain=[], fields=['amount_total:sum'], groupby=['partner_id'])
+  source = [['Customer','Amount']] + [[r['partner_id'][1], r.get('amount_total',0)] for r in result if r.get('partner_id')]
+  return {'dataset':{'source':source},'series':[{'type':'pie','radius':'60%','encode':{'itemName':'Customer','value':'Amount'}}]}
+NEVER use xAxis.data or series.data — always use dataset.source.
+"""
 
         return guidance
 
@@ -943,6 +990,7 @@ Quick reference - available local tools:
         total_input = 0
         total_output = 0
         last_tool_name = None  # Track the last tool called for error handling
+        tool_call_counts = {}  # {(tool_name, args_json): int} — track same-call repetitions
 
         # Determine if we should strip system message (for providers that handle system internally)
         # NOTE: Don't strip system messages - the providers extract system from messages parameter
@@ -1002,10 +1050,22 @@ Quick reference - available local tools:
                 'content': response.get('text') or response.get('reply') or '',
             }
 
-            # Only add tool_calls to message for providers that require it in message history
+            # Add tool_calls to assistant message for OpenAI-format providers (required for tool result matching)
             provider_name = getattr(provider, '__class__', None).__name__ or ''
-            if response.get('tool_calls') and 'MiniMax' not in provider_name and 'OpenCode' not in provider_name:
-                assistant_msg['tool_calls'] = response.get('tool_calls')
+            if response.get('tool_calls') and 'MiniMax' not in provider_name:
+                if message_format == 'openai':
+                    # OpenAI spec: assistant message must carry tool_calls so tool results can be matched by ID
+                    assistant_msg['tool_calls'] = [
+                        {
+                            'id': tc.get('id', f'tc_{ti}'),
+                            'type': 'function',
+                            'function': {
+                                'name': tc.get('name', ''),
+                                'arguments': tc.get('arguments', '{}') if isinstance(tc.get('arguments'), str) else json.dumps(tc.get('arguments', {})),
+                            }
+                        }
+                        for ti, tc in enumerate(response.get('tool_calls', []))
+                    ]
 
             messages_to_send.append(assistant_msg)
 
@@ -1017,11 +1077,6 @@ Quick reference - available local tools:
             # Detect possible hallucination: model returned stop with no tool call for action request
             # on first turn of a new request (turn 0 means first API call in this loop)
             if turn == 0 and not tool_calls and response.get('finish_reason') in ('stop', 'end_turn'):
-                # Check if this is a fresh session (fewer than 3 messages before user message)
-                # Count messages (excluding system and synthetic date exchange)
-                non_system_msgs = [m for m in messages_to_send if m.get('role') != 'system']
-                is_fresh_session = len(non_system_msgs) <= 3
-
                 # Find the user message in history to check for action words
                 user_msg_for_check = None
                 for msg in messages:
@@ -1032,28 +1087,62 @@ Quick reference - available local tools:
                 if user_msg_for_check:
                     user_msg_lower = user_msg_for_check.lower()
                     action_words = ['create', 'make', 'add', 'update', 'delete', 'schedule',
-                                    'find', 'search', 'book', 'cancel', 'list', 'show', 'get']
+                                    'find', 'search', 'book', 'cancel', 'list', 'show', 'get',
+                                    'how many', 'count', 'fetch', 'retrieve', 'give me', 'what are']
                     has_action_word = any(w in user_msg_lower for w in action_words)
 
                     if has_action_word:
-                        if is_fresh_session:
-                            # Fresh session with action request and no tool call - just log WARNING
-                            # Do NOT retry automatically per requirements - just log
-                            _logger.warning(
-                                "HALLUCINATION DETECTED: fresh session with action word '%s' "
-                                "but no tool calls returned",
-                                user_msg_for_check[:50]
+                        _logger.warning(
+                            "HALLUCINATION DETECTED: action request '%s' returned no tool call — retrying with correction.",
+                            user_msg_for_check[:80]
+                        )
+                        correction = {
+                            'role': 'user',
+                            'content': (
+                                "You answered from memory without calling any tool. "
+                                "That is not allowed — you MUST call the appropriate tool now. "
+                                "Do not answer from training data or session history. "
+                                "Query the Odoo database using a tool to get current, accurate information."
                             )
-                        else:
-                            _logger.warning(
-                                "POSSIBLE HALLUCINATION: model returned stop with no tool call "
-                                "for action request: %s",
-                                user_msg_for_check[:100]
-                            )
+                        }
+                        messages_to_send.append(correction)
+                        try:
+                            retry_resp = provider.call(agent, messages_to_send, tool_specs)
+                            if retry_resp and retry_resp.get('tool_calls'):
+                                _logger.info("Hallucination correction retry succeeded — tool calls returned.")
+                                response = retry_resp
+                                tool_calls = retry_resp.get('tool_calls', [])
+                                response_text = retry_resp.get('text') or retry_resp.get('reply') or ''
+                                total_input += retry_resp.get('input_tokens', 0)
+                                total_output += retry_resp.get('output_tokens', 0)
+                                # Rebuild messages_to_send with correct assistant msg
+                                messages_to_send.pop()  # remove correction
+                                messages_to_send.pop()  # remove stale no-tool assistant msg
+                                assistant_msg = {'role': 'assistant', 'content': response_text}
+                                if retry_resp.get('tool_calls') and 'MiniMax' not in provider_name:
+                                    if message_format == 'openai':
+                                        assistant_msg['tool_calls'] = [
+                                            {
+                                                'id': tc.get('id', f'tc_{ti}'),
+                                                'type': 'function',
+                                                'function': {
+                                                    'name': tc.get('name', ''),
+                                                    'arguments': tc.get('arguments', '{}') if isinstance(tc.get('arguments'), str) else json.dumps(tc.get('arguments', {})),
+                                                }
+                                            }
+                                            for ti, tc in enumerate(retry_resp.get('tool_calls', []))
+                                        ]
+                                messages_to_send.append(assistant_msg)
+                            else:
+                                _logger.warning("Hallucination correction retry also returned no tool calls.")
+                                messages_to_send.pop()  # remove correction, proceed with original
+                        except Exception as retry_err:
+                            _logger.warning("Hallucination correction retry failed: %s", str(retry_err))
+                            messages_to_send.pop()  # remove correction on failure
 
             # Detect if we're stuck in a loop (tool calls without final text after tool execution)
-            # This happens when provider keeps calling tools instead of returning final answer
-            if tool_calls and not response_text and total_tool_calls > 0:
+            # Only fire after many tool calls — normal multi-step queries make 2-5 tool calls legitimately
+            if tool_calls and not response_text and total_tool_calls >= 8:
                 # This is a loop - provider returned tool calls instead of final answer
                 self._logger.warning('Provider stuck in tool call loop at turn %d, trying fallbacks', turn)
 
@@ -1064,8 +1153,8 @@ Quick reference - available local tools:
                         original_user_msg = msg.get('content')
                         break
 
-                # Try 1: Fallback model (only on first loop detection)
-                if turn == 1:  # Only try on first loop detection
+                # Try 1: Fallback model (only on first few detections to avoid repeated cost)
+                if turn <= 3:  # Try fallback model on first few stuck detections
                     fallback_response = self._retry_with_fallback_model(
                         provider, agent, messages_to_send, tool_specs, agent.model_name
                     )
@@ -1125,6 +1214,13 @@ Quick reference - available local tools:
                 tool_name = tool_call['name']
                 arguments = tool_call['arguments']
                 tool_call_id = tool_call.get('id') or f'tc_{turn}_{i}'
+                # For get_model_schema: key by model only (different fields= args count as same call)
+                _args_dict = json.loads(arguments) if isinstance(arguments, str) else (arguments or {})
+                if tool_name == 'get_model_schema':
+                    _args_key = (tool_name, json.dumps({'model': _args_dict.get('model', '')}, sort_keys=True))
+                else:
+                    _args_key = (tool_name, json.dumps(_args_dict, sort_keys=True, default=str))
+                tool_call_counts[_args_key] = tool_call_counts.get(_args_key, 0) + 1
 
                 # Log tool call BEFORE execution (audit trail)
                 self.env['mcp.session.message'].create({
@@ -1154,13 +1250,21 @@ Quick reference - available local tools:
                 if is_external:
                     # Route to external MCP server
                     result = self._call_external_mcp_tool(server_name, original_name, arguments)
-                elif not tool:
-                    result = json.dumps({'success': False, 'error': f'Tool not found: {tool_name}'})
-                    self._logger.warning('Tool not found: %s', tool_name)
                 else:
-                    # Check access to tool
+                    # Check access rules BEFORE tool search (F014)
+                    is_admin = self.user.id == 1 or self.user.id == 2 or self.user.has_group('base.group_system') or self.user.has_group('mcp_gateway.group_mcp_admin') or self.user._is_admin()
                     rules = self.env['mcp.access.rule'].get_rules_for_user(self.user)
-                    if len(rules['tool_ids']) > 0 and tool.id not in rules['tool_ids'].ids:
+                    has_general_access = is_admin or (rules.get('rules_matched', False) and rules.get('all_tools_allowed', False))
+
+                    if not tool:
+                        # Tool doesn't exist - check if user has general tool access
+                        if not has_general_access:
+                            result = json.dumps({'success': False, 'error': f'Tool not found: {tool_name}'})
+                            self._logger.warning('Tool not found: %s', tool_name)
+                        else:
+                            result = json.dumps({'success': False, 'error': f'Tool not found: {tool_name}'})
+                            self._logger.warning('Tool not found: %s', tool_name)
+                    elif not is_admin and not has_general_access and tool.id not in rules['tool_ids'].ids:
                         result = json.dumps({'success': False, 'error': f'Access denied to tool: {tool_name}'})
                         self._logger.warning('User %s not allowed to use tool %s', self.user.name, tool_name)
                     else:
@@ -1179,10 +1283,16 @@ Quick reference - available local tools:
                     if isinstance(result_data, dict) and result_data.get('success') is False:
                         self._logger.info('Tool %s returned error, stopping loop: %s', tool_name, result_data.get('error'))
                         # Log tool result before returning
+                        display_content = json.dumps({
+                            '_is_structured': True,
+                            'tool_name': tool_name,
+                            'success': False,
+                            'error': result_data.get('error', 'Unknown error'),
+                        })
                         self.env['mcp.session.message'].create({
                             'session_id': session.id if session else None,
                             'role': 'tool_result',
-                            'content': result,
+                            'content': display_content,
                             'tool_name': tool_name,
                             'tool_call_id': tool_call_id,
                         })
@@ -1194,11 +1304,16 @@ Quick reference - available local tools:
                 except (json.JSONDecodeError, TypeError):
                     pass  # Not JSON, continue normal flow
 
-                # Log tool result
+                # Log tool result — convert to structured JSON for frontend card rendering
+                try:
+                    _rd = json.loads(result)
+                    display_content = self._format_tool_success_html(tool_name, arguments, _rd)
+                except Exception:
+                    display_content = result
                 self.env['mcp.session.message'].create({
                     'session_id': session.id if session else None,
                     'role': 'tool_result',
-                    'content': result,
+                    'content': display_content,
                     'tool_name': tool_name,
                     'tool_call_id': tool_call_id,
                 })
@@ -1207,34 +1322,274 @@ Quick reference - available local tools:
                 # Append to messages_to_send so it goes in the next provider call
                 self._append_tool_result(provider, messages_to_send, tool_call_id, tool_name, result, message_format)
 
-                # If tool executed successfully, stop the loop and return success message
-                # This prevents the model from calling the same tool multiple times
-                try:
-                    result_data = json.loads(result)
-                    if isinstance(result_data, dict) and result_data.get('success') is True:
-                        self._logger.info('Tool %s succeeded, stopping loop', tool_name)
-                        # Format success message for user
-                        tool_result_text = result_data.get('result', {})
-                        if isinstance(tool_result_text, dict):
-                            event_id = tool_result_text.get('id', 'unknown')
-                            event_name = tool_result_text.get('name', tool_name)
-                            success_msg = f"Successfully created: {event_name} (ID: {event_id})"
-                        else:
-                            success_msg = f"Action completed: {tool_name}"
+                # Stop loop after terminal write tools — AI cannot usefully continue after these
+                _TERMINAL_TOOLS = frozenset(['create_echart', 'create_record', 'update_record', 'delete_record'])
+                if tool_name in _TERMINAL_TOOLS:
+                    try:
+                        r = json.loads(result)
+                        if not (isinstance(r, dict) and r.get('success') is False):
+                            done_msg = self._format_terminal_tool_message(tool_name, r)
+                            return {
+                                'text': done_msg,
+                                'tool_calls': [],
+                            }, [], total_tool_calls, total_input, total_output, tool_name
+                    except (json.JSONDecodeError, TypeError):
+                        pass
 
-                        # Return immediately with success - don't let model loop
-                        return {
-                            'text': success_msg,
-                            'tool_calls': [],
-                        }, [], total_tool_calls, total_input, total_output, tool_name
-                except (json.JSONDecodeError, TypeError):
-                    pass  # Not JSON, continue normal flow
+            # Detect stuck-on-same-tool: if any non-terminal tool called 3+ times, force synthesis
+            _TERMINAL_TOOLS_SET = frozenset(['create_echart', 'create_record', 'update_record', 'delete_record'])
+            MAX_SAME_TOOL_CALLS = 3
+            _force_exit = False
+            for (_stuck_tool, _stuck_args_json), _stuck_count in tool_call_counts.items():
+                if _stuck_tool not in _TERMINAL_TOOLS_SET and _stuck_count >= MAX_SAME_TOOL_CALLS:
+                    # Check if real data (search_read/read_record/read_group) was fetched
+                    _data_fetched = any(
+                        tn in ('search_read', 'read_record', 'read_group')
+                        for (tn, _) in tool_call_counts.keys()
+                    )
+                    self._logger.warning(
+                        'Tool %s called %d times — forcing synthesis (data_fetched=%s)',
+                        _stuck_tool, _stuck_count, _data_fetched
+                    )
+
+                    # Build synthesis messages: convert tool results → user messages to retain data
+                    _synth_msgs = []
+                    for _m in messages_to_send:
+                        _r = _m.get('role', '')
+                        if _r == 'tool':
+                            _synth_msgs.append({'role': 'user', 'content': f'[Tool data]: {_m.get("content", "")}'})
+                        elif _r == 'tool_result':
+                            _synth_msgs.append({'role': 'user', 'content': f'[Tool data]: {_m.get("content", "")}'})
+                        elif _r == 'user' and isinstance(_m.get('content'), list):
+                            _parts = _m['content']
+                            if _parts and isinstance(_parts[0], dict) and _parts[0].get('type') == 'tool_result':
+                                _synth_msgs.append({'role': 'user', 'content': f'[Tool data]: {_parts[0].get("content", "")}'})
+                            else:
+                                _synth_msgs.append(_m)
+                        elif _r == 'assistant' and _m.get('tool_calls'):
+                            _c = _m.get('content', '')
+                            if _c:
+                                _synth_msgs.append({'role': 'assistant', 'content': _c})
+                        else:
+                            _synth_msgs.append(_m)
+
+                    # If schema looped but no records fetched, execute search_read ourselves
+                    if not _data_fetched and _stuck_tool == 'get_model_schema':
+                        try:
+                            _stuck_model = json.loads(_stuck_args_json).get('model', '')
+                        except Exception:
+                            _stuck_model = ''
+                        if _stuck_model:
+                            # Derive fields from the schema result in message history
+                            _auto_fields = ['id', 'name']
+                            for _sm in reversed(messages_to_send):
+                                if _sm.get('role') == 'tool':
+                                    try:
+                                        _raw = json.loads(_sm.get('content', ''))
+                                        # Dispatcher wraps result in {'success': True, 'result': {...}}
+                                        _schema = _raw.get('result', _raw) if isinstance(_raw, dict) else _raw
+                                        if isinstance(_schema, dict):
+                                            for _fn in _schema.keys():
+                                                if any(_fn.startswith(_p) for _p in ('image_', 'qty_', 'virtual_', 'list_price', 'default_code', 'x_')):
+                                                    _auto_fields.append(_fn)
+                                    except Exception:
+                                        pass
+                                    break
+                            _auto_fields = list(dict.fromkeys(_auto_fields))[:10]
+                            try:
+                                _sr_tool = self.env['mcp.tool'].search([('name', '=', 'search_read')], limit=1)
+                                if _sr_tool:
+                                    _sr_args = {'model': _stuck_model, 'fields': _auto_fields, 'limit': 20}
+                                    _sr_result = ToolDispatcher().dispatch(_sr_tool, _sr_args, self.env, self.user)
+                                    self._logger.info('Auto search_read for %s returned data', _stuck_model)
+                                    _synth_msgs.append({
+                                        'role': 'user',
+                                        'content': f'[Auto-fetched records from {_stuck_model}]: {_sr_result}',
+                                    })
+                            except Exception as _sre:
+                                self._logger.warning('Auto search_read failed: %s', _sre)
+
+                    # Extract the most recent user question (last non-tool user message)
+                    _orig_question = ''
+                    for _sm in reversed(_synth_msgs):
+                        _sc = str(_sm.get('content', ''))
+                        if _sm.get('role') == 'user' and not _sc.startswith('[Tool data]') and not _sc.startswith('[Auto-fetched'):
+                            _orig_question = _sc
+                            break
+
+                    _synth_msgs.append({
+                        'role': 'user',
+                        'content': (
+                            f"STOP CALLING TOOLS. You have already called `{_stuck_tool}` {_stuck_count} times. "
+                            f"The database records fetched so far are present above as [Tool data] or [Auto-fetched records]. "
+                            f"Respond NOW using ONLY the data already in this conversation. "
+                            f"CRITICAL RULE: If the task requires executing an action (updating records, sending emails, running code) "
+                            f"that you have NOT yet performed, you MUST honestly say so — do NOT fabricate or pretend the action was done. "
+                            f"Instead, tell the user exactly what you found and what action is still needed. "
+                            f"Original question: {_orig_question!r}"
+                        )
+                    })
+                    try:
+                        forced_resp = provider.call(agent, _synth_msgs, [])
+                        forced_text = forced_resp.get('text') or forced_resp.get('reply') or ''
+                        total_input += forced_resp.get('input_tokens', 0)
+                        total_output += forced_resp.get('output_tokens', 0)
+                        if forced_text:
+                            self._logger.info('Forced synthesis succeeded after %d repeated %s calls', _stuck_count, _stuck_tool)
+                            return forced_resp, [], total_tool_calls, total_input, total_output, _stuck_tool
+                    except Exception as _fe:
+                        self._logger.warning('Forced synthesis failed: %s', str(_fe))
+                    _force_exit = True
+                    break
+            if _force_exit:
+                break  # Exit outer turn loop — prevent looping indefinitely after failed synthesis
 
             # Loop back — messages_to_send now contains tool results for next turn
 
         # Safety: if we hit max turns, return what we have
         self._logger.warning('Max tool-call turns (%d) reached, returning partial response', max_turns)
         return response, tool_calls, total_tool_calls, total_input, total_output, last_tool_name
+
+    def _format_terminal_tool_message(self, tool_name, result):
+        if tool_name == 'create_echart':
+            name = result.get('name', 'Chart') if isinstance(result, dict) else 'Chart'
+            chart_id = result.get('id', '') if isinstance(result, dict) else ''
+            return f'Chart "{name}" created successfully (ID: {chart_id}). View it in the MCP Charts app.'
+        elif tool_name == 'create_record':
+            record_id = result.get('id', '') if isinstance(result, dict) else ''
+            return f'Record created successfully (ID: {record_id}).'
+        elif tool_name == 'update_record':
+            return 'Record(s) updated successfully.'
+        elif tool_name == 'delete_record':
+            return 'Record(s) deleted successfully.'
+        return 'Operation completed successfully.'
+
+    def _format_tool_success_html(self, tool_name, arguments, result_data):
+        """
+        Dynamically formats tool execution success result into a structured JSON string.
+        """
+        try:
+            arg_dict = json.loads(arguments) if isinstance(arguments, str) else (arguments or {})
+        except Exception:
+            arg_dict = {}
+
+        result_val = result_data.get('result')
+
+        # Create structured output
+        out = {
+            '_is_structured': True,
+            'tool_name': tool_name,
+        }
+
+        # 1. search_read
+        if tool_name == 'search_read' and isinstance(result_val, list):
+            model = arg_dict.get('model', '')
+            field_types = {}
+            model_obj = self.env.get(model)
+            if model_obj is not None and result_val:
+                requested_fields = arg_dict.get('fields') or list((result_val[0] or {}).keys())
+                try:
+                    fget = model_obj.fields_get(requested_fields, ['type', 'currency_field'])
+                    field_types = {
+                        fn: {'type': fi.get('type', 'char'), 'currency_field': fi.get('currency_field')}
+                        for fn, fi in fget.items()
+                    }
+                except Exception:
+                    pass
+            out.update({
+                'model': model,
+                'count': len(result_val),
+                'records': result_val[:10],
+                'field_types': field_types,
+            })
+            return json.dumps(out)
+
+        # 2. read_record
+        elif tool_name == 'read_record':
+            model = arg_dict.get('model', '')
+            res_id = arg_dict.get('res_id', '')
+            item = None
+            if isinstance(result_val, list) and result_val:
+                item = result_val[0]
+            elif isinstance(result_val, dict):
+                item = result_val
+            field_types = {}
+            model_obj = self.env.get(model)
+            if model_obj is not None and item:
+                try:
+                    fget = model_obj.fields_get(list(item.keys()), ['type', 'currency_field'])
+                    field_types = {
+                        fn: {'type': fi.get('type', 'char'), 'currency_field': fi.get('currency_field')}
+                        for fn, fi in fget.items()
+                    }
+                except Exception:
+                    pass
+            out.update({
+                'model': model,
+                'res_id': res_id,
+                'record': item,
+                'field_types': field_types,
+            })
+            return json.dumps(out)
+
+        # 3. list_models
+        elif tool_name == 'list_models' and isinstance(result_val, list):
+            out.update({
+                'models': result_val[:20],
+                'count': len(result_val)
+            })
+            return json.dumps(out)
+
+        # 4. get_model_schema
+        elif tool_name == 'get_model_schema' and isinstance(result_val, dict):
+            model = arg_dict.get('model', 'Unknown Model')
+            out.update({
+                'model': model,
+                'schema': result_val
+            })
+            return json.dumps(out)
+
+        # 5. read_group
+        elif tool_name == 'read_group' and isinstance(result_val, list):
+            out.update({'result': result_val})
+            return json.dumps(out)
+
+        # 6. create_record
+        elif tool_name == 'create_record' and isinstance(result_val, dict):
+            model = arg_dict.get('model', '')
+            new_id = result_val.get('id', 'unknown')
+            out.update({
+                'model': model,
+                'id': new_id
+            })
+            return json.dumps(out)
+
+        # 6. update_record
+        elif tool_name == 'update_record':
+            model = arg_dict.get('model', '')
+            res_ids = arg_dict.get('res_ids', [])
+            out.update({
+                'model': model,
+                'count': len(res_ids)
+            })
+            return json.dumps(out)
+
+        # 7. delete_record
+        elif tool_name == 'delete_record':
+            model = arg_dict.get('model', '')
+            res_ids = arg_dict.get('res_ids', [])
+            out.update({
+                'model': model,
+                'count': len(res_ids)
+            })
+            return json.dumps(out)
+
+        # Fallback to simple success message
+        out.update({
+            'success': True,
+            'result': result_val if isinstance(result_val, (dict, list, str, int, float, bool)) else str(result_val)
+        })
+        return json.dumps(out)
 
     def _append_tool_result(self, provider, messages, tool_call_id, tool_name, result, message_format='openai'):
         """

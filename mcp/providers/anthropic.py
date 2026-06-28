@@ -179,7 +179,8 @@ class AnthropicAdapter(AbstractProvider):
 
             response = client.messages.create(**payload)
 
-            return self.parse_response(response)
+            resp_dict = response.model_dump() if hasattr(response, 'model_dump') else response
+            return self.parse_response(resp_dict)
 
         except anthropic.AuthenticationError as e:
             _logger.error('Anthropic authentication failed: %s', str(e))

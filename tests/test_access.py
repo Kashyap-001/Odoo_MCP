@@ -35,13 +35,35 @@ class TestAccessRules(TransactionCase):
             'model_name': 'gpt-4',
         })
 
+    def _create_test_user(self, name, login, groups=None):
+        self.env.cr.execute("""
+            SELECT column_name 
+            FROM information_schema.columns 
+            WHERE table_name='res_partner' AND column_name='autopost_bills'
+        """)
+        if self.env.cr.fetchone():
+            self.env.cr.execute("""
+                INSERT INTO res_partner (name, active, autopost_bills, create_date, write_date, create_uid, write_uid) 
+                VALUES (%s, True, 'never', now(), now(), %s, %s) RETURNING id
+            """, (name, self.env.uid, self.env.uid))
+            partner_id = self.env.cr.fetchone()[0]
+            partner = self.env['res.partner'].browse(partner_id)
+        else:
+            partner_vals = {
+                'name': name,
+            }
+            partner = self.env['res.partner'].create(partner_vals)
+        user_vals = {
+            'login': login,
+            'partner_id': partner.id,
+        }
+        if groups:
+            user_vals['groups_id'] = [(4, g) for g in groups]
+        return self.env['res.users'].create(user_vals)
+
     def test_admin_has_all_access(self):
         """Test admin users have access to all agents."""
-        admin_user = self.env['res.users'].create({
-            'name': 'Admin Test',
-            'login': 'admin_test',
-            'groups_id': [(4, self.admin_group.id)],
-        })
+        admin_user = self._create_test_user('Admin Test', 'admin_test', [self.admin_group.id])
 
         # Admin should have access
         rules = self.env['mcp.access.rule'].get_rules_for_user(admin_user)
@@ -49,16 +71,12 @@ class TestAccessRules(TransactionCase):
 
     def test_user_group_access_rule(self):
         """Test user group access enforcement."""
-        user = self.env['res.users'].create({
-            'name': 'Limited User',
-            'login': 'limited_user',
-            'groups_id': [(4, self.user_group.id)],
-        })
+        user = self._create_test_user('Limited User', 'limited_user', [self.user_group.id])
 
         # Create rule granting access
         rule = self.env['mcp.access.rule'].create({
             'name': 'Limited Access',
-            'group_id': self.user_group.id,
+            'group_ids': [(4, self.user_group.id)],
             'agent_ids': [(4, self.agent.id)],
         })
 
@@ -67,11 +85,7 @@ class TestAccessRules(TransactionCase):
 
     def test_multiple_rule_merge(self):
         """Test multiple rules are merged with OR logic."""
-        user = self.env['res.users'].create({
-            'name': 'Multi Rule User',
-            'login': 'multi_user',
-            'groups_id': [(4, self.user_group.id)],
-        })
+        user = self._create_test_user('Multi Rule User', 'multi_user', [self.user_group.id])
 
         agent2 = self.env['mcp.agent'].create({
             'name': 'Agent 2',
@@ -83,13 +97,13 @@ class TestAccessRules(TransactionCase):
         # Create two rules
         rule1 = self.env['mcp.access.rule'].create({
             'name': 'Rule 1',
-            'group_id': self.user_group.id,
+            'group_ids': [(4, self.user_group.id)],
             'agent_ids': [(4, self.agent.id)],
         })
 
         rule2 = self.env['mcp.access.rule'].create({
             'name': 'Rule 2',
-            'group_id': self.user_group.id,
+            'group_ids': [(4, self.user_group.id)],
             'agent_ids': [(4, agent2.id)],
         })
 
@@ -116,18 +130,40 @@ class TestRateLimiting(TransactionCase):
             'model_name': 'gpt-4',
         })
 
+    def _create_test_user(self, name, login, groups=None):
+        self.env.cr.execute("""
+            SELECT column_name 
+            FROM information_schema.columns 
+            WHERE table_name='res_partner' AND column_name='autopost_bills'
+        """)
+        if self.env.cr.fetchone():
+            self.env.cr.execute("""
+                INSERT INTO res_partner (name, active, autopost_bills, create_date, write_date, create_uid, write_uid) 
+                VALUES (%s, True, 'never', now(), now(), %s, %s) RETURNING id
+            """, (name, self.env.uid, self.env.uid))
+            partner_id = self.env.cr.fetchone()[0]
+            partner = self.env['res.partner'].browse(partner_id)
+        else:
+            partner_vals = {
+                'name': name,
+            }
+            partner = self.env['res.partner'].create(partner_vals)
+        user_vals = {
+            'login': login,
+            'partner_id': partner.id,
+        }
+        if groups:
+            user_vals['groups_id'] = [(4, g) for g in groups]
+        return self.env['res.users'].create(user_vals)
+
     def test_daily_rate_limit(self):
         """Test daily rate limiting."""
-        user = self.env['res.users'].create({
-            'name': 'Rate Limited User',
-            'login': 'rate_user',
-            'groups_id': [(4, self.user_group.id)],
-        })
+        user = self._create_test_user('Rate Limited User', 'rate_user', [self.user_group.id])
 
         # Create rule with 1 call/day limit
         rule = self.env['mcp.access.rule'].create({
             'name': 'Rate Limit Rule',
-            'group_id': self.user_group.id,
+            'group_ids': [(4, self.user_group.id)],
             'rate_limit_day': 1,
         })
 
@@ -149,14 +185,11 @@ class TestRateLimiting(TransactionCase):
 
     def test_monthly_rate_limit(self):
         """Test monthly rate limiting."""
-        user = self.env['res.users'].create({
-            'name': 'Monthly Limited User',
-            'login': 'monthly_user',
-        })
+        user = self._create_test_user('Monthly Limited User', 'monthly_user', [self.user_group.id])
 
         rule = self.env['mcp.access.rule'].create({
             'name': 'Monthly Limit',
-            'group_id': self.user_group.id,
+            'group_ids': [(4, self.user_group.id)],
             'rate_limit_month': 100,
         })
 

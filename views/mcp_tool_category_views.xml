@@ -54,7 +54,7 @@
     </record>
 
     <!-- Action - Window action for tool categories -->
-    <record id="mcp_tool_category_action" model="ir.actions.act_window">
+    <record id="action_mcp_tool_category" model="ir.actions.act_window">
         <field name="name">Tool Categories</field>
         <field name="res_model">mcp.tool.category</field>
         <field name="view_mode">list,form</field>

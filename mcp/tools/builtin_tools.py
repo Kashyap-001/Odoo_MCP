@@ -1,367 +1,327 @@
 """
 mcp_gateway/mcp/tools/builtin_tools.py
 
-Pre-configured Odoo tools for the built-in tool library.
-
-Defines 14 commonly-used Odoo tools that are auto-installed:
-  1-2:   Partner (search, create)
-  3-5:   Sale Order (search, create, confirm)
-  6-7:   Invoice (search, details)
-  8-10:  Product, Stock, CRM Lead (search)
-  11-12: CRM Lead (create), Calendar Event (create)
-  13-14: Helpdesk Ticket (create), HR Employee (search)
-
-These tools are instantiated as mcp.tool records in data/default_tools.xml.
-
-Developer notes:
-  - All tools have complete input_schema with required/optional fields
-  - Descriptions written for AI understanding (mention what agent can do)
-  - Tool names follow snake_case convention
-  - readonly=True for read operations, False for mutations
-  - requires_confirm=True for sensitive operations (create, confirm, etc.)
+Generic and Developer Odoo MCP Tools.
+Defines 18 tools mapping to dynamic ORM, code inspection, safe_eval scripting,
+visual dashboards, webapp compilation, package installers, and subagents.
 """
 
 import json
 
 BUILTIN_TOOLS = [
     # ════════════════════════════════════════════════════════════════
-    # SALES & CRM TOOLS
+    # CATEGORY 1: READ TOOLS (Auto-Enabled)
     # ════════════════════════════════════════════════════════════════
-
     {
-        'name': 'partner_search',
-        'display_name_label': 'Search Partners',
-        'description': 'Search for customers, suppliers, or contacts by name, email, or phone. Returns matching partners with ID, name, email, phone, and website.',
+        'name': 'list_models',
+        'display_name_label': 'List Models',
+        'description': 'Discover installed Odoo models in the database. Supports regex filter on technical model names.',
         'tool_type': 'odoo',
-        'category_id': False,  # Will be set to Sales & CRM
-        'odoo_model': 'res.partner',
-        'odoo_method': 'search_read',
-        'odoo_domain': '[]',
-        'odoo_fields': 'id,name,email,phone,website,country_id',
-        'odoo_limit': 10,
+        'category_id': False,
+        'odoo_model': 'ir.model',
+        'odoo_method': 'list_models',
         'is_readonly': True,
         'requires_confirm': False,
         'input_schema': json.dumps({
             'type': 'object',
             'properties': {
-                'name': {'type': 'string', 'description': 'Partner name (partial match)'},
-                'email': {'type': 'string', 'description': 'Partner email'},
-                'phone': {'type': 'string', 'description': 'Partner phone number'},
-                'limit': {'type': 'integer', 'description': 'Max results', 'default': 10},
+                'regex': {'type': 'string', 'description': 'Regex filter for model name (e.g. "^sale\\.")'},
             },
         }),
-        'output_sample': '[{"id": 1, "name": "Acme Inc", "email": "contact@acme.com", "phone": "+1234567890"}]',
+        'output_sample': '[{"model": "sale.order", "name": "Sales Order"}]',
     },
 
     {
-        'name': 'partner_create',
-        'display_name_label': 'Create Partner',
-        'description': 'Create a new customer, supplier, or contact. Requires name and at least email or phone. Returns created partner ID.',
+        'name': 'get_model_schema',
+        'display_name_label': 'Get Model Schema',
+        'description': 'Retrieve complete schema definition of an Odoo model, including fields, field types, labels, and relational parameters.',
         'tool_type': 'odoo',
         'category_id': False,
-        'odoo_model': 'res.partner',
-        'odoo_method': 'create',
-        'odoo_domain': '[]',
+        'odoo_model': 'ir.model',
+        'odoo_method': 'get_model_schema',
+        'is_readonly': True,
+        'requires_confirm': False,
+        'input_schema': json.dumps({
+            'type': 'object',
+            'properties': {
+                'model': {'type': 'string', 'description': 'Target Odoo model (e.g. "res.partner")'},
+                'fields': {'type': 'array', 'items': {'type': 'string'}, 'description': 'Specific fields to inspect'},
+            },
+            'required': ['model'],
+        }),
+        'output_sample': '{"name": {"type": "char", "string": "Name"}, "partner_id": {"type": "many2one", "relation": "res.partner"}}',
+    },
+
+    {
+        'name': 'search_read',
+        'display_name_label': 'Search Records',
+        'description': 'Query Odoo database records using filters, field lists, pagination limits, and ordering.',
+        'tool_type': 'odoo',
+        'category_id': False,
+        'odoo_model': 'ir.model',
+        'odoo_method': 'search_read',
+        'is_readonly': True,
+        'requires_confirm': False,
+        'input_schema': json.dumps({
+            'type': 'object',
+            'properties': {
+                'model': {'type': 'string', 'description': 'Technical model name (e.g. "crm.lead")'},
+                'domain': {'type': 'array', 'description': 'Odoo domain array (e.g. [["state", "=", "draft"]])'},
+                'fields': {'type': 'array', 'items': {'type': 'string'}, 'description': 'Fields to return'},
+                'limit': {'type': 'integer', 'description': 'Max records to fetch (default: 10, max: 100)', 'default': 10},
+                'order': {'type': 'string', 'description': 'Order by field (e.g. "write_date desc")'},
+            },
+            'required': ['model'],
+        }),
+        'output_sample': '[{"id": 1, "name": "Acme Lead", "probability": 0.5}]',
+    },
+
+    {
+        'name': 'read_record',
+        'display_name_label': 'Read Record Details',
+        'description': 'Retrieve all or specific fields of a single database record by its primary ID.',
+        'tool_type': 'odoo',
+        'category_id': False,
+        'odoo_model': 'ir.model',
+        'odoo_method': 'read_record',
+        'is_readonly': True,
+        'requires_confirm': False,
+        'input_schema': json.dumps({
+            'type': 'object',
+            'properties': {
+                'model': {'type': 'string', 'description': 'Technical model name (e.g. "res.partner")'},
+                'res_id': {'type': 'integer', 'description': 'Record primary database ID'},
+                'fields': {'type': 'array', 'items': {'type': 'string'}, 'description': 'Specific fields to read'},
+            },
+            'required': ['model', 'res_id'],
+        }),
+        'output_sample': '{"id": 1, "name": "Acme Inc", "email": "info@acme.com"}',
+    },
+
+    {
+        'name': 'read_group',
+        'display_name_label': 'Aggregate Records (Group By)',
+        'description': 'Group and aggregate database fields, generating sums or counts grouped by keys.',
+        'tool_type': 'odoo',
+        'category_id': False,
+        'odoo_model': 'ir.model',
+        'odoo_method': 'read_group',
+        'is_readonly': True,
+        'requires_confirm': False,
+        'input_schema': json.dumps({
+            'type': 'object',
+            'properties': {
+                'model': {'type': 'string', 'description': 'Technical model name (e.g. "sale.order")'},
+                'domain': {'type': 'array', 'description': 'Odoo domain array filter'},
+                'fields': {'type': 'array', 'items': {'type': 'string'}, 'description': 'Aggregated fields (e.g. ["price_total:sum"])'},
+                'groupby': {'type': 'array', 'items': {'type': 'string'}, 'description': 'Fields to group by (e.g. ["date_order:month"])'},
+                'limit': {'type': 'integer', 'description': 'Max group records'},
+                'order': {'type': 'string', 'description': 'Sorting parameters'},
+            },
+            'required': ['model', 'fields', 'groupby'],
+        }),
+        'output_sample': '[{"date_order_count": 5, "price_total": 4500.0, "date_order:month": "May 2026"}]',
+    },
+
+    # ════════════════════════════════════════════════════════════════
+    # CATEGORY 2: WRITE TOOLS (Allowlist Required)
+    # ════════════════════════════════════════════════════════════════
+    {
+        'name': 'create_record',
+        'display_name_label': 'Create Record',
+        'description': 'Insert a new record in an Odoo model. Relational fields accept Command commands.',
+        'tool_type': 'odoo',
+        'category_id': False,
+        'odoo_model': 'ir.model',
+        'odoo_method': 'create_record',
         'is_readonly': False,
         'requires_confirm': True,
         'input_schema': json.dumps({
             'type': 'object',
             'properties': {
-                'name': {'type': 'string', 'description': 'Partner name (required)'},
-                'email': {'type': 'string', 'description': 'Email address'},
-                'phone': {'type': 'string', 'description': 'Phone number'},
-                'website': {'type': 'string', 'description': 'Website URL'},
-                'country_id': {'type': 'integer', 'description': 'Country ID'},
+                'model': {'type': 'string', 'description': 'Technical model name (e.g. "sale.order")'},
+                'values': {'type': 'object', 'description': 'Key-value dictionary mapping fields to create values'},
             },
-            'required': ['name'],
+            'required': ['model', 'values'],
         }),
         'output_sample': '{"id": 42}',
     },
 
     {
-        'name': 'sale_order_search',
-        'display_name_label': 'Search Sales Orders',
-        'description': 'Search for sales orders by customer name, status, or date. Returns order ID, customer, amount, and state.',
+        'name': 'update_record',
+        'display_name_label': 'Update Record(s)',
+        'description': 'Modify write properties of one or more records in an Odoo model by record IDs.',
         'tool_type': 'odoo',
         'category_id': False,
-        'odoo_model': 'sale.order',
-        'odoo_method': 'search_read',
-        'odoo_domain': '[]',
-        'odoo_fields': 'id,partner_id,amount_total,state,date_order',
-        'odoo_limit': 10,
-        'is_readonly': True,
-        'requires_confirm': False,
-        'input_schema': json.dumps({
-            'type': 'object',
-            'properties': {
-                'partner_name': {'type': 'string', 'description': 'Customer name filter'},
-                'state': {'type': 'string', 'description': 'Order state (draft, sent, sale, done, cancel)'},
-                'limit': {'type': 'integer', 'default': 10},
-            },
-        }),
-        'output_sample': '[{"id": 1, "partner_id": [1, "Acme"], "amount_total": 1000.0, "state": "sale"}]',
-    },
-
-    {
-        'name': 'sale_order_create',
-        'display_name_label': 'Create Sales Order',
-        'description': 'Create a new sales order for a customer. Requires customer ID and order lines with product and quantity.',
-        'tool_type': 'odoo',
-        'category_id': False,
-        'odoo_model': 'sale.order',
-        'odoo_method': 'create',
+        'odoo_model': 'ir.model',
+        'odoo_method': 'update_record',
         'is_readonly': False,
         'requires_confirm': True,
         'input_schema': json.dumps({
             'type': 'object',
             'properties': {
-                'partner_id': {'type': 'integer', 'description': 'Customer ID (required)'},
-                'order_line': {
-                    'type': 'array',
-                    'description': 'Order lines',
-                    'items': {
-                        'type': 'object',
-                        'properties': {
-                            'product_id': {'type': 'integer'},
-                            'product_uom_qty': {'type': 'number'},
-                            'price_unit': {'type': 'number'},
-                        },
-                    },
-                },
+                'model': {'type': 'string', 'description': 'Technical model name (e.g. "res.partner")'},
+                'res_ids': {'type': 'array', 'items': {'type': 'integer'}, 'description': 'Target record database IDs'},
+                'values': {'type': 'object', 'description': 'Key-value updates'},
             },
-            'required': ['partner_id', 'order_line'],
-        }),
-        'output_sample': '{"id": 99}',
-    },
-
-    {
-        'name': 'sale_order_confirm',
-        'display_name_label': 'Confirm Sales Order',
-        'description': 'Confirm a draft sales order (transition to sale state). Requires order ID.',
-        'tool_type': 'odoo',
-        'category_id': False,
-        'odoo_model': 'sale.order',
-        'odoo_method': 'action_confirm',
-        'is_readonly': False,
-        'requires_confirm': True,
-        'input_schema': json.dumps({
-            'type': 'object',
-            'properties': {
-                'id': {'type': 'integer', 'description': 'Sale order ID (required)'},
-            },
-            'required': ['id'],
+            'required': ['model', 'res_ids', 'values'],
         }),
         'output_sample': '{"success": true}',
     },
 
     {
-        'name': 'crm_lead_search',
-        'display_name_label': 'Search CRM Leads',
-        'description': 'Search for sales leads by name, stage, or probability. Returns lead ID, name, company, and stage.',
+        'name': 'delete_record',
+        'display_name_label': 'Delete Record(s)',
+        'description': 'Delete one or more records from an Odoo model by record IDs.',
         'tool_type': 'odoo',
         'category_id': False,
-        'odoo_model': 'crm.lead',
-        'odoo_method': 'search_read',
-        'odoo_fields': 'id,name,partner_name,stage_id,probability',
-        'odoo_limit': 10,
-        'is_readonly': True,
-        'requires_confirm': False,
-        'input_schema': json.dumps({
-            'type': 'object',
-            'properties': {
-                'name': {'type': 'string', 'description': 'Lead name filter'},
-                'stage_id': {'type': 'integer', 'description': 'Stage ID'},
-            },
-        }),
-        'output_sample': '[{"id": 1, "name": "Tech Corp Lead", "partner_name": "Tech Corp", "stage_id": [1, "Qualified"], "probability": 0.5}]',
-    },
-
-    {
-        'name': 'crm_lead_create',
-        'display_name_label': 'Create CRM Lead',
-        'description': 'Create a new sales lead for follow-up. Requires contact name and company name. Sets initial stage to "New".',
-        'tool_type': 'odoo',
-        'category_id': False,
-        'odoo_model': 'crm.lead',
-        'odoo_method': 'create',
+        'odoo_model': 'ir.model',
+        'odoo_method': 'delete_record',
         'is_readonly': False,
         'requires_confirm': True,
         'input_schema': json.dumps({
             'type': 'object',
             'properties': {
-                'name': {'type': 'string', 'description': 'Lead name (required)'},
-                'partner_name': {'type': 'string', 'description': 'Company name'},
-                'email_from': {'type': 'string', 'description': 'Email'},
-                'phone': {'type': 'string', 'description': 'Phone'},
+                'model': {'type': 'string', 'description': 'Technical model name'},
+                'res_ids': {'type': 'array', 'items': {'type': 'integer'}, 'description': 'Database IDs to unlink'},
             },
-            'required': ['name'],
+            'required': ['model', 'res_ids'],
         }),
-        'output_sample': '{"id": 42}',
-    },
-
-    # ════════════════════════════════════════════════════════════════
-    # FINANCE & ACCOUNTING TOOLS
-    # ════════════════════════════════════════════════════════════════
-
-    {
-        'name': 'invoice_search',
-        'display_name_label': 'Search Invoices',
-        'description': 'Search for invoices by customer, state (draft, posted, paid), or amount. Returns invoice number, date, amount, and state.',
-        'tool_type': 'odoo',
-        'category_id': False,
-        'odoo_model': 'account.move',
-        'odoo_method': 'search_read',
-        'odoo_domain': '[["move_type","in",["out_invoice","in_invoice"]]]',
-        'odoo_fields': 'id,name,partner_id,amount_total,state,invoice_date',
-        'odoo_limit': 10,
-        'is_readonly': True,
-        'requires_confirm': False,
-        'input_schema': json.dumps({
-            'type': 'object',
-            'properties': {
-                'partner_name': {'type': 'string', 'description': 'Customer name filter'},
-                'state': {'type': 'string', 'description': 'Invoice state (draft, posted, paid, canceled)'},
-            },
-        }),
-        'output_sample': '[{"id": 1, "name": "INV-2025-001", "partner_id": [1, "Acme"], "amount_total": 500.0, "state": "posted"}]',
+        'output_sample': '{"success": true}',
     },
 
     {
-        'name': 'invoice_details',
-        'display_name_label': 'Get Invoice Details',
-        'description': 'Get full details of an invoice including line items, taxes, and payments.',
+        'name': 'execute_method',
+        'display_name_label': 'Execute Model Method',
+        'description': 'Invoke a custom Odoo workflow method or action (e.g. action_confirm) on a specific recordset.',
         'tool_type': 'odoo',
         'category_id': False,
-        'odoo_model': 'account.move',
-        'odoo_method': 'read',
-        'is_readonly': True,
-        'requires_confirm': False,
-        'input_schema': json.dumps({
-            'type': 'object',
-            'properties': {
-                'id': {'type': 'integer', 'description': 'Invoice ID (required)'},
-            },
-            'required': ['id'],
-        }),
-        'output_sample': '{"id": 1, "name": "INV-2025-001", "amount_total": 500.0, "invoice_line_ids": [...]}',
-    },
-
-    # ════════════════════════════════════════════════════════════════
-    # OPERATIONS & INVENTORY TOOLS
-    # ════════════════════════════════════════════════════════════════
-
-    {
-        'name': 'product_search',
-        'display_name_label': 'Search Products',
-        'description': 'Search for products by name, category, or code. Returns product ID, name, category, and price.',
-        'tool_type': 'odoo',
-        'category_id': False,
-        'odoo_model': 'product.template',
-        'odoo_method': 'search_read',
-        'odoo_fields': 'id,name,categ_id,list_price,default_code',
-        'odoo_limit': 10,
-        'is_readonly': True,
-        'requires_confirm': False,
-        'input_schema': json.dumps({
-            'type': 'object',
-            'properties': {
-                'name': {'type': 'string', 'description': 'Product name (partial match)'},
-                'categ_id': {'type': 'integer', 'description': 'Category ID'},
-            },
-        }),
-        'output_sample': '[{"id": 1, "name": "Widget Pro", "list_price": 99.99, "default_code": "WID-001"}]',
-    },
-
-    {
-        'name': 'stock_quantity_search',
-        'display_name_label': 'Check Stock Levels',
-        'description': 'Check inventory levels for products across warehouses. Returns product, warehouse, and available quantity.',
-        'tool_type': 'odoo',
-        'category_id': False,
-        'odoo_model': 'stock.quant',
-        'odoo_method': 'search_read',
-        'odoo_fields': 'id,product_id,location_id,quantity,reserved_quantity',
-        'odoo_limit': 20,
-        'is_readonly': True,
-        'requires_confirm': False,
-        'input_schema': json.dumps({
-            'type': 'object',
-            'properties': {
-                'product_id': {'type': 'integer', 'description': 'Product ID'},
-                'location_id': {'type': 'integer', 'description': 'Warehouse/location ID'},
-            },
-        }),
-        'output_sample': '[{"product_id": [1, "Widget"], "location_id": [1, "Stock"], "quantity": 50.0, "reserved_quantity": 5.0}]',
-    },
-
-    {
-        'name': 'calendar_event_create',
-        'display_name_label': 'Create Calendar Event',
-        'description': 'Create a calendar event or meeting. Requires event name, start time, and attendees (optional).',
-        'tool_type': 'odoo',
-        'category_id': False,
-        'odoo_model': 'calendar.event',
-        'odoo_method': 'create',
+        'odoo_model': 'ir.model',
+        'odoo_method': 'execute_method',
         'is_readonly': False,
         'requires_confirm': True,
         'input_schema': json.dumps({
             'type': 'object',
             'properties': {
-                'name': {'type': 'string', 'description': 'Event name (required)'},
-                'start': {'type': 'string', 'description': 'Start datetime (ISO format, required)'},
-                'stop': {'type': 'string', 'description': 'End datetime (ISO format, required)'},
-                'partner_ids': {'type': 'array', 'items': {'type': 'integer'}, 'description': 'Attendee partner IDs'},
+                'model': {'type': 'string', 'description': 'Technical model name'},
+                'res_ids': {'type': 'array', 'items': {'type': 'integer'}, 'description': 'Target record database IDs'},
+                'method': {'type': 'string', 'description': 'Method name to call (e.g. "action_confirm")'},
+                'args': {'type': 'array', 'description': 'Positional method arguments'},
+                'kwargs': {'type': 'object', 'description': 'Keyword method arguments'},
             },
-            'required': ['name', 'start', 'stop'],
+            'required': ['model', 'res_ids', 'method'],
         }),
-        'output_sample': '{"id": 42}',
+        'output_sample': '{"result": null}',
     },
 
     # ════════════════════════════════════════════════════════════════
-    # HR & SUPPORT TOOLS
+    # CATEGORY 3: CODE TOOLS (Allowlist Required)
     # ════════════════════════════════════════════════════════════════
-
     {
-        'name': 'helpdesk_ticket_create',
-        'display_name_label': 'Create Support Ticket',
-        'description': 'Create a new helpdesk ticket. Requires ticket name and description. Used for tracking support requests.',
+        'name': 'code_search',
+        'display_name_label': 'Search Addons Code',
+        'description': 'Search within the workspace addons code files for regex string patterns.',
         'tool_type': 'odoo',
         'category_id': False,
-        'odoo_model': 'helpdesk.ticket',
-        'odoo_method': 'create',
-        'is_readonly': False,
-        'requires_confirm': True,
-        'input_schema': json.dumps({
-            'type': 'object',
-            'properties': {
-                'name': {'type': 'string', 'description': 'Ticket title (required)'},
-                'description': {'type': 'string', 'description': 'Ticket description'},
-                'partner_id': {'type': 'integer', 'description': 'Customer partner ID'},
-            },
-            'required': ['name'],
-        }),
-        'output_sample': '{"id": 42}',
-    },
-
-    {
-        'name': 'employee_search',
-        'display_name_label': 'Search Employees',
-        'description': 'Search for employees by name or department. Returns employee ID, name, department, and job title.',
-        'tool_type': 'odoo',
-        'category_id': False,
-        'odoo_model': 'hr.employee',
-        'odoo_method': 'search_read',
-        'odoo_fields': 'id,name,department_id,job_id,work_email',
-        'odoo_limit': 10,
+        'odoo_model': 'ir.model',
+        'odoo_method': 'code_search',
         'is_readonly': True,
         'requires_confirm': False,
         'input_schema': json.dumps({
             'type': 'object',
             'properties': {
-                'name': {'type': 'string', 'description': 'Employee name (partial match)'},
-                'department_id': {'type': 'integer', 'description': 'Department ID'},
+                'query': {'type': 'string', 'description': 'Pattern regex to search for'},
+                'path_filter': {'type': 'string', 'description': 'Glob pattern to filter paths (e.g., "*.py")'},
             },
+            'required': ['query'],
         }),
-        'output_sample': '[{"id": 1, "name": "John Smith", "department_id": [1, "Sales"], "job_id": [1, "Sales Manager"]}]',
+        'output_sample': '[{"file": "models/res_partner.py", "line": 42, "content": "class ResPartner(models.Model):"}]',
+    },
+
+    {
+        'name': 'code_read',
+        'display_name_label': 'Read Code File',
+        'description': 'View contents of a workspace python/XML/CSV file page by page.',
+        'tool_type': 'odoo',
+        'category_id': False,
+        'odoo_model': 'ir.model',
+        'odoo_method': 'code_read',
+        'is_readonly': True,
+        'requires_confirm': False,
+        'input_schema': json.dumps({
+            'type': 'object',
+            'properties': {
+                'filepath': {'type': 'string', 'description': 'Relative path to file in project'},
+                'start_line': {'type': 'integer', 'description': 'Start line (1-indexed)', 'default': 1},
+                'end_line': {'type': 'integer', 'description': 'End line (1-indexed)', 'default': 100},
+            },
+            'required': ['filepath'],
+        }),
+        'output_sample': '"class Partner(models.Model):\\n    _inherit = \'res.partner\'"',
+    },
+
+    # ════════════════════════════════════════════════════════════════
+    # CATEGORY 4: ADVANCED / SANDBOX TOOLS (High Risk)
+    # ════════════════════════════════════════════════════════════════
+    {
+        'name': 'execute_orm',
+        'display_name_label': 'Execute Backend Script (safe_eval)',
+        'description': 'Evaluate arbitrary python script blocks utilizing Odoo backend environment and libraries in safe_eval.',
+        'tool_type': 'odoo',
+        'category_id': False,
+        'odoo_model': 'ir.model',
+        'odoo_method': 'execute_orm',
+        'is_readonly': False,
+        'requires_confirm': True,
+        'input_schema': json.dumps({
+            'type': 'object',
+            'properties': {
+                'code': {'type': 'string', 'description': 'Python block to execute (expose env, user, Command)'},
+            },
+            'required': ['code'],
+        }),
+        'output_sample': '{"result": 42}',
+    },
+
+    {
+        'name': 'create_echart',
+        'display_name_label': 'Create EChart Dashboard Widget',
+        'description': 'Generate and save a visual Apache ECharts widget in Odoo database.',
+        'tool_type': 'odoo',
+        'category_id': False,
+        'odoo_model': 'ir.model',
+        'odoo_method': 'create_echart',
+        'is_readonly': False,
+        'requires_confirm': True,
+        'input_schema': json.dumps({
+            'type': 'object',
+            'properties': {
+                'name': {'type': 'string', 'description': 'Chart title shown in MCP Charts app'},
+                'data_code': {'type': 'string', 'description': 'Python script (env, user available) that queries Odoo ORM and returns a complete ECharts options dict. Must end with: return {...}'},
+            },
+            'required': ['name', 'data_code'],
+        }),
+        'output_sample': '{"id": 1, "name": "June Sales"}',
+    },
+
+    {
+        'name': 'ai_agent_query',
+        'display_name_label': 'Delegate Query to AI Agent',
+        'description': 'Delegate queries or analytics requests to another configured database AI subagent (with recursion protection).',
+        'tool_type': 'odoo',
+        'category_id': False,
+        'odoo_model': 'ir.model',
+        'odoo_method': 'ai_agent_query',
+        'is_readonly': True,
+        'requires_confirm': False,
+        'input_schema': json.dumps({
+            'type': 'object',
+            'properties': {
+                'agent_id': {'type': 'integer', 'description': 'Relational ID of target mcp.agent'},
+                'prompt': {'type': 'string', 'description': 'Prompt instructions'},
+            },
+            'required': ['agent_id', 'prompt'],
+        }),
+        'output_sample': '"Response from delegated Agent..."',
     },
 ]

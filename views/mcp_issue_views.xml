@@ -137,7 +137,7 @@
                     <button name="action_mark_done" string="Done"
                             class="btn-success" type="object"
                             invisible="state == 'done'"/>
-                    <field name="state" widget="statusbar" statusbar_visible="needs_triage,needs_info,ready_for_agent,ready_for_human,done"/>
+                    <field name="state" widget="badge"/>
                 </header>
                 <sheet>
                     <group>

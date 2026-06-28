@@ -108,31 +108,3 @@ class PromptTemplate(models.Model):
         """Count sessions using this template (placeholder for now)."""
         for template in self:
             template.usage_count = 0
-
-    def render(self, variable_values: dict) -> str:
-        """
-        Substitute {variable} placeholders with provided values.
-
-        Args:
-            variable_values (dict): e.g., {'name': 'John', 'email': 'john@example.com'}
-
-        Returns:
-            str: Rendered template with variables substituted
-
-        Raises:
-            UserError: if required variable missing or syntax error
-
-        Example:
-            template = env['mcp.prompt.template'].search([('name','=','Welcome')])
-            msg = template.render({'customer_name': 'Alice'})
-        """
-        try:
-            return self.content.format(**variable_values)
-        except KeyError as e:
-            raise exceptions.UserError(
-                _('Missing required variable: %s') % str(e)
-            )
-        except Exception as e:
-            raise exceptions.UserError(
-                _('Template render error: %s') % str(e)
-            )

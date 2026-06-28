@@ -123,13 +123,16 @@ class ChatController(http.Controller):
         """
         try:
             user = http.request.env.user
+            is_admin = user.id in (1, 2) or user.has_group('base.group_system') or user.has_group('mcp_gateway.group_mcp_admin') or user._is_admin()
             rules = http.request.env['mcp.access.rule'].get_rules_for_user(user)
 
-            if len(rules['agent_ids']) == 0:
+            if is_admin or (rules.get('rules_matched', False) and rules.get('all_agents_allowed', False)):
                 # User has access to all agents via rules with empty agent_ids
                 agents = http.request.env['mcp.agent'].search([('active', '=', True)])
-            else:
+            elif rules.get('rules_matched', False):
                 agents = rules['agent_ids']
+            else:
+                agents = http.request.env['mcp.agent']  # empty
 
             agents_data = []
             for agent in agents:
@@ -185,13 +188,16 @@ class ChatController(http.Controller):
         """
         try:
             user = http.request.env.user
+            is_admin = user.id in (1, 2) or user.has_group('base.group_system') or user.has_group('mcp_gateway.group_mcp_admin') or user._is_admin()
             rules = http.request.env['mcp.access.rule'].get_rules_for_user(user)
 
-            if len(rules['tool_ids']) == 0:
+            if is_admin or (rules.get('rules_matched', False) and rules.get('all_tools_allowed', False)):
                 # Access to all tools
                 tools = http.request.env['mcp.tool'].search([('active', '=', True)])
-            else:
+            elif rules.get('rules_matched', False):
                 tools = rules['tool_ids']
+            else:
+                tools = http.request.env['mcp.tool']  # empty
 
             if agent_id:
                 agent = http.request.env['mcp.agent'].browse(agent_id)

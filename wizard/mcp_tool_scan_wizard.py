@@ -142,7 +142,7 @@ class ToolScanWizard(models.TransientModel):
                     'odoo_method': line.method,
                     'is_readonly': is_readonly,
                     'requires_confirm': requires_confirm,
-                    'input_schema': '{}',
+                    'input_schema': self._get_model_schema(line.model_name, line.method),
                 })
 
                 tools_created += 1
@@ -160,6 +160,61 @@ class ToolScanWizard(models.TransientModel):
                 'sticky': False,
             }
         }
+
+    def _get_model_schema(self, model_name: str, method: str) -> str:
+        """
+        Generate a basic JSON Schema for an Odoo model/method.
+
+        Args:
+            model_name: Odoo model name
+            method: Method name (search_read, create, etc.)
+
+        Returns:
+            str: JSON Schema string
+        """
+        if method == 'search_read':
+            return json.dumps({
+                "type": "object",
+                "properties": {
+                    "domain": {"type": "array", "description": "Odoo domain filter"},
+                    "limit": {"type": "integer", "default": 10}
+                }
+            })
+
+        if method in ('create', 'write'):
+            try:
+                model = self.env[model_name]
+                properties = {}
+                required = []
+
+                # Add ID for write
+                if method == 'write':
+                    properties['id'] = {"type": "integer", "description": "ID of record to update"}
+                    required.append('id')
+
+                # Scan fields (limit to basic ones to avoid massive schemas)
+                for name, field in model._fields.items():
+                    if field.manual or field.required or name in ('name', 'display_name'):
+                        if field.type in ('char', 'text', 'selection'):
+                            properties[name] = {"type": "string", "description": field.string}
+                        elif field.type in ('integer', 'many2one'):
+                            properties[name] = {"type": "integer", "description": field.string}
+                        elif field.type == 'boolean':
+                            properties[name] = {"type": "boolean", "description": field.string}
+
+                        if field.required and name != 'id':
+                            required.append(name)
+
+                return json.dumps({
+                    "type": "object",
+                    "properties": properties,
+                    "required": required
+                })
+            except Exception:
+                return '{}'
+
+        return '{}'
+
 
 
 class ToolScanLine(models.TransientModel):

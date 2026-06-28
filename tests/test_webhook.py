@@ -14,6 +14,7 @@ Dependencies:
 import json
 from unittest import mock
 from odoo.tests import TransactionCase
+from odoo.exceptions import UserError
 
 
 class TestWebhookTrigger(TransactionCase):
@@ -31,10 +32,11 @@ class TestWebhookTrigger(TransactionCase):
     def test_webhook_creation(self):
         """Test webhook trigger record creation."""
         webhook = self.env['mcp.webhook.trigger'].create({
-            'name': 'New Lead Webhook',
-            'trigger_model': 'crm.lead',
+            'name': 'New Tag Webhook',
+            'trigger_model': 'res.partner.category',
             'agent_id': self.agent.id,
-            'description': 'Triggers when new lead created',
+            'description': 'Triggers when new tag created',
+            'message_template': 'New tag created: {record.name}',
         })
 
         self.assertTrue(webhook.exists())
@@ -45,19 +47,21 @@ class TestWebhookTrigger(TransactionCase):
         """Test webhook tokens are unique."""
         webhook1 = self.env['mcp.webhook.trigger'].create({
             'name': 'Webhook 1',
-            'trigger_model': 'crm.lead',
+            'trigger_model': 'res.partner.category',
             'agent_id': self.agent.id,
+            'message_template': 'Test 1: {record.name}',
         })
 
         webhook2 = self.env['mcp.webhook.trigger'].create({
             'name': 'Webhook 2',
-            'trigger_model': 'crm.lead',
+            'trigger_model': 'res.partner.category',
             'agent_id': self.agent.id,
+            'message_template': 'Test 2: {record.name}',
         })
 
         self.assertNotEqual(webhook1.token, webhook2.token)
 
-    @mock.patch('mcp.gateway.McpGateway.run')
+    @mock.patch('odoo.addons.mcp_gateway.mcp.gateway.McpGateway.run')
     def test_webhook_fire(self, mock_run):
         """Test firing webhook trigger."""
         mock_run.return_value = {
@@ -67,16 +71,17 @@ class TestWebhookTrigger(TransactionCase):
 
         webhook = self.env['mcp.webhook.trigger'].create({
             'name': 'Test Webhook',
-            'trigger_model': 'crm.lead',
+            'trigger_model': 'res.partner.category',
             'agent_id': self.agent.id,
+            'message_template': 'Test fire: {record.name}',
         })
 
-        # Create test lead
-        lead = self.env['crm.lead'].create({
-            'name': 'Test Lead',
+        # Create test tag
+        tag = self.env['res.partner.category'].create({
+            'name': 'Test Tag',
         })
 
-        result = webhook.fire(lead)
+        result = webhook.fire(tag)
 
         self.assertEqual(result['reply'], 'Triggered successfully')
         self.assertEqual(result['session_id'], 1)
@@ -85,9 +90,10 @@ class TestWebhookTrigger(TransactionCase):
         """Test inactive webhooks don't fire."""
         webhook = self.env['mcp.webhook.trigger'].create({
             'name': 'Inactive Webhook',
-            'trigger_model': 'crm.lead',
+            'trigger_model': 'res.partner.category',
             'agent_id': self.agent.id,
             'active': False,
+            'message_template': 'Inactive: {record.name}',
         })
 
         self.assertFalse(webhook.active)
@@ -95,20 +101,16 @@ class TestWebhookTrigger(TransactionCase):
     def test_webhook_model_mismatch(self):
         """Test webhook rejects mismatched models."""
         webhook = self.env['mcp.webhook.trigger'].create({
-            'name': 'Lead Webhook',
-            'trigger_model': 'crm.lead',
+            'name': 'Tag Webhook',
+            'trigger_model': 'res.partner.category',
             'agent_id': self.agent.id,
+            'message_template': 'Mismatch: {record.name}',
         })
 
-        # Try to fire with wrong model
-        partner = self.env['res.partner'].create({
-            'name': 'Test Partner',
-        })
-
-        # Should raise or return error
-        from odoo.exceptions import UserError
-        with self.assertRaises((UserError, AssertionError)):
-            webhook.fire(partner)
+        # Try to fire with wrong model (using self.agent which is mcp.agent, not res.partner.category)
+        # Should raise UserError
+        with self.assertRaises(UserError):
+            webhook.fire(self.agent)
 
 
 class TestWebhookSecurity(TransactionCase):
@@ -127,8 +129,9 @@ class TestWebhookSecurity(TransactionCase):
         """Test webhook token validation on fire."""
         webhook = self.env['mcp.webhook.trigger'].create({
             'name': 'Secure Webhook',
-            'trigger_model': 'crm.lead',
+            'trigger_model': 'res.partner.category',
             'agent_id': self.agent.id,
+            'message_template': 'Secure: {record.name}',
         })
 
         # Try to find with wrong token
@@ -143,9 +146,10 @@ class TestWebhookSecurity(TransactionCase):
         """Test disabled webhooks aren't found."""
         webhook = self.env['mcp.webhook.trigger'].create({
             'name': 'Disabled Webhook',
-            'trigger_model': 'crm.lead',
+            'trigger_model': 'res.partner.category',
             'agent_id': self.agent.id,
             'active': False,
+            'message_template': 'Disabled: {record.name}',
         })
 
         # Search should not find disabled webhooks

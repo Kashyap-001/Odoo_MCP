@@ -251,11 +251,22 @@ class OpenCodeAdapter(AbstractProvider):
             _logger.info('OpenCode response: status=%s, body=%s', response.status_code, response.text[:500])
 
             if response.status_code == 401:
-                raise UserError(_('Invalid OpenCode API key. Please check your API key.'))
+                # Try to extract the actual error message from the body
+                error_msg = "Invalid OpenCode API key. Please check your API key."
+                try:
+                    error_data = response.json()
+                    if 'error' in error_data and 'message' in error_data['error']:
+                        error_msg = error_data['error']['message']
+                except Exception:
+                    pass
+                raise UserError(_('OpenCode API error (401): %s') % error_msg)
 
             response.raise_for_status()
             return self.parse_response(response.json())
 
+        except UserError:
+            # Re-raise UserErrors immediately so they aren't caught and rewritten
+            raise
         except httpx.HTTPStatusError as e:
             _logger.error('OpenCode HTTP error: %s', str(e))
             raise UserError(_('OpenCode API error: %s') % str(e))

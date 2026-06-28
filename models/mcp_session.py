@@ -57,8 +57,7 @@ class Session(models.Model):
     # ── Identifiers ─────────────────────────────────────────────────
     name = fields.Char(
         string=_('Session Name'),
-        required=True,
-        readonly=True,
+        default=lambda self: _('New Session'),
         help=_('Auto-generated name (Session YYYY-MM-DD HH:MM)'),
     )
     user_id = fields.Many2one(
@@ -100,7 +99,7 @@ class Session(models.Model):
     session_message_ids = fields.One2many(
         comodel_name='mcp.session.message',
         inverse_name='session_id',
-        string=_('Messages'),
+        string=_('Session Messages'),
         readonly=True,
         help=_('Conversation messages and tool calls'),
     )
@@ -219,11 +218,23 @@ class Session(models.Model):
                     author_partner = bot_user.partner_id.id if bot_user.partner_id else None
                     agent_name = self.agent_id.name or 'Agent'
 
-                    self.with_context(mcp_agent_response=True).message_post(
-                        body=f"[{agent_name}]: {reply_text}",
-                        message_type='comment',
-                        author_id=author_partner,
-                    )
+                    # Check if reply contains HTML - format accordingly
+                    if reply_text and ('<' in reply_text and '>' in reply_text):
+                        # HTML content - format as HTML message
+                        self.with_context(mcp_agent_response=True).message_post(
+                            body=f"<b>[{agent_name}]</b><br/>{reply_text}",
+                            message_type='comment',
+                            author_id=author_partner,
+                            subtype_xmlid='mail.mt_comment',
+                            body_is_html=True,
+                        )
+                    else:
+                        # Plain text - wrap in agent name
+                        self.with_context(mcp_agent_response=True).message_post(
+                            body=f"[{agent_name}]: {reply_text}",
+                            message_type='comment',
+                            author_id=author_partner,
+                        )
                 except Exception as e:
                     _logger.error('Agent response failed: %s', str(e))
                     import traceback
@@ -262,7 +273,17 @@ class Session(models.Model):
             if not vals.get('name'):
                 now = datetime.now()
                 vals['name'] = now.strftime(_('Session %Y-%m-%d %H:%M'))
-        return super().create(vals_list)
+        records = super().create(vals_list)
+        # Delete any empty sessions (no messages) left by previous abandoned chats
+        new_ids = records.ids
+        for rec in records:
+            if rec.user_id:
+                self.sudo().search([
+                    ('user_id', '=', rec.user_id.id),
+                    ('id', 'not in', new_ids),
+                    ('session_message_ids', '=', False),
+                ]).unlink()
+        return records
 
     @api.depends('session_message_ids')
     def _compute_tool_call_count(self):

@@ -3,84 +3,505 @@
 
     <!-- MCP Chat Widget Main Component -->
     <t t-name="mcp_gateway.ChatWidget">
-        <div class="mcp-chat-container">
-            <div class="mcp-chat-header">
-                <h3>
-                    <t t-esc="state.selectedAgent?.name or 'Select Agent'"/>
-                </h3>
-                <span class="mcp-status-badge" t-attf-class="mcp-status-{{ state.selectedAgent?.status }}">
-                    <t t-esc="state.selectedAgent?.status or 'offline'"/>
-                </span>
+        <div class="mcp-chat-layout" t-att-class="{'sidebar-closed': !state.sidebarOpen}">
+
+            <!-- Sidebar: Navigation & History -->
+            <div class="mcp-chat-sidebar">
+                <div class="mcp-sidebar-header">
+                    <button class="mcp-new-chat-btn" t-on-click="newChat">
+                        <i class="fa fa-plus me-2"/> New Chat
+                    </button>
+                </div>
+
+                <!-- Recent Sessions grouped by agent -->
+                <div class="mcp-sidebar-section">
+                    <div class="mcp-section-label">RECENT SESSIONS</div>
+                    <div class="mcp-session-list">
+                        <t t-if="sessionsByAgent.length === 0">
+                            <div class="mcp-session-empty">No sessions yet</div>
+                        </t>
+                        <t t-foreach="sessionsByAgent" t-as="group" t-key="group.id">
+                            <div class="mcp-agent-group-label"
+                                 t-on-click="() => this.toggleAgentGroup(group.id)">
+                                <span class="mcp-mini-avatar me-2"><t t-esc="group.name[0]"/></span>
+                                <span class="mcp-group-name"><t t-esc="group.name"/></span>
+                                <i t-attf-class="fa fa-chevron-{{ state.collapsedAgents[group.id] ? 'right' : 'down' }} ms-auto mcp-collapse-icon"/>
+                            </div>
+                            <t t-if="!state.collapsedAgents[group.id]">
+                                <t t-foreach="group.sessions" t-as="session" t-key="session.id">
+                                    <div class="mcp-session-item"
+                                         t-att-class="{'active': state.sessionId === session.id}"
+                                         t-on-click="() => this.selectSession(session)">
+                                        <div class="mcp-session-content">
+                                            <div class="mcp-session-name"><t t-esc="session.name"/></div>
+                                            <div class="mcp-session-preview"><t t-esc="session.lastMessage"/></div>
+                                        </div>
+                                    </div>
+                                </t>
+                            </t>
+                        </t>
+                    </div>
+                </div>
+
+                <!-- Agents -->
+                <div class="mcp-sidebar-section">
+                    <div class="mcp-section-label">AGENTS</div>
+                    <div class="mcp-agent-list">
+                        <t t-foreach="state.agents" t-as="agent" t-key="agent.id">
+                            <div class="mcp-agent-item"
+                                 t-att-class="{'active': state.selectedAgent?.id === agent.id &amp;&amp; !state.sessionId}"
+                                 t-on-click="() => this.selectAgent(agent)">
+                                <div class="mcp-mini-avatar">
+                                    <t t-esc="agent.name[0]"/>
+                                </div>
+                                <div class="mcp-agent-name"><t t-esc="agent.name"/></div>
+                            </div>
+                        </t>
+                    </div>
+                </div>
             </div>
 
-            <div class="mcp-agent-selector" t-if="!state.selectedAgent">
-                <div class="oe_structure">
-                    <t t-foreach="state.agents" t-as="agent">
-                        <div class="mcp-agent-option" t-on-click="() => selectAgent(agent)">
-                            <div class="mcp-agent-avatar">
-                                <t t-esc="agent.name[0]"/>
-                            </div>
-                            <div class="mcp-agent-info">
-                                <div class="mcp-agent-name">
-                                    <t t-esc="agent.name"/>
+            <!-- Main Chat Area -->
+            <div class="mcp-chat-main">
+                <div class="mcp-chat-header">
+                    <div class="mcp-header-left">
+                        <button class="mcp-sidebar-toggle btn btn-light d-md-none me-2" t-on-click="toggleSidebar">
+                            <i class="fa fa-bars"/>
+                        </button>
+                        <h3>
+                            <t t-if="state.selectedAgent">
+                                <t t-esc="state.selectedAgent.name"/>
+                            </t>
+                            <t t-else="">Select an Agent</t>
+                        </h3>
+                    </div>
+                    <div class="mcp-header-actions" t-if="state.selectedAgent">
+                        <span class="mcp-status-badge" t-attf-class="mcp-status-{{ state.selectedAgent.status || 'online' }}">
+                            <t t-esc="state.selectedAgent.status || 'online'"/>
+                        </span>
+                    </div>
+                </div>
+
+                <!-- Agent Selection Grid (Only shown if nothing selected) -->
+                <div class="mcp-agent-selector" t-if="!state.selectedAgent &amp;&amp; !state.loading">
+                    <div class="mcp-welcome-hero">
+                        <h1>How can I help you today?</h1>
+                        <p>Select an specialized agent to start a new Odoo conversation.</p>
+                    </div>
+                    <div class="mcp-agent-grid">
+                        <t t-foreach="state.agents" t-as="agent" t-key="agent.id">
+                            <div class="mcp-agent-card" t-on-click="() => this.selectAgent(agent)">
+                                <div class="mcp-agent-avatar-large">
+                                    <t t-esc="agent.name[0]"/>
                                 </div>
-                                <div class="mcp-agent-model">
-                                    <t t-esc="agent.model_name"/>
+                                <h4><t t-esc="agent.name"/></h4>
+                                <p class="text-muted small mb-2"><t t-esc="agent.model_name"/></p>
+                                <div class="d-flex flex-wrap gap-1 justify-content-center">
+                                    <span class="badge bg-light text-muted border">
+                                        <i class="fa fa-comments me-1"/><t t-esc="agent.session_count"/> sessions
+                                    </span>
+                                    <span class="badge bg-light text-muted border">
+                                        <i class="fa fa-bolt me-1"/><t t-esc="(agent.total_tokens || 0).toLocaleString()"/> tokens
+                                    </span>
+                                    <t t-if="agent.total_cost_usd > 0">
+                                        <span class="badge bg-light text-success border">
+                                            $<t t-esc="(agent.total_cost_usd || 0).toFixed(4)"/>
+                                        </span>
+                                    </t>
                                 </div>
                             </div>
+                        </t>
+                    </div>
+                </div>
+
+                <!-- Chat History -->
+                <div class="mcp-chat-history" t-if="state.selectedAgent">
+                    <div class="mcp-empty-state" t-if="state.messages.length === 0 &amp;&amp; !state.loading">
+                        <i class="fa fa-bolt fa-3x mb-3 text-primary opacity-25"/>
+                        <p>Start a new session with <t t-esc="state.selectedAgent.name"/></p>
+                    </div>
+
+                    <t t-foreach="state.messages" t-as="msg" t-key="msg_index">
+                        <t t-call="mcp_gateway.MessageBubble">
+                            <t t-set="message" t-value="msg"/>
+                        </t>
+                    </t>
+
+                    <!-- Typing indicator — shown while AI is processing -->
+                    <div t-if="state.isTyping" class="mcp-assistant-msg" style="align-self: flex-start;">
+                        <div class="mcp-typing-indicator">
+                            <span/><span/><span/>
                         </div>
-                    </t>
+                    </div>
                 </div>
-            </div>
 
-            <div class="mcp-chat-history">
-                <t t-foreach="state.messages" t-as="msg">
-                    <t t-call="mcp_gateway.MessageBubble">
-                        <t t-set="message" t-value="msg"/>
-                    </t>
-                </t>
-                <div t-if="state.loading" class="mcp-user-msg">
-                    <span class="mcp-loading"></span>
-                    <span class="mcp-loading"></span>
-                    <span class="mcp-loading"></span>
-                </div>
-            </div>
-
-            <div class="mcp-input-area">
-                <textarea
-                    class="mcp-message-input"
-                    t-ref="messageInput"
-                    placeholder="Type your message..."
-                    t-on-keydown="onKeyDown"/>
-                <button
-                    class="mcp-send-btn"
-                    t-on-click="sendMessage"
-                    t-att-disabled="state.loading">
-                    Send
-                </button>
-                <div class="mcp-token-counter">
-                    Tokens: <t t-esc="state.totalTokens"/>
-                    <span class="mcp-cost-indicator" t-if="state.estimatedCost > 0">
-                        ($<t t-esc="state.estimatedCost.toFixed(4)"/>)
-                    </span>
+                <!-- Input Area -->
+                <div class="mcp-input-area" t-if="state.selectedAgent">
+                    <div class="mcp-input-wrapper">
+                        <textarea
+                            class="mcp-message-input"
+                            t-ref="messageInput"
+                            placeholder="System command or query..."
+                            t-on-keydown="onKeyDown"/>
+                        <button
+                            class="mcp-send-btn"
+                            t-on-click="sendMessage"
+                            t-att-disabled="state.loading">
+                            <i class="fa fa-paper-plane"/>
+                        </button>
+                    </div>
+                    <div class="mcp-token-counter">
+                        <span class="mcp-data-label">SESSION DATA:</span>
+                        <span>TOKENS: <t t-esc="state.totalTokens"/></span>
+                        <span class="mcp-cost-indicator" t-if="state.estimatedCost > 0">
+                            COST: $<t t-esc="state.estimatedCost.toFixed(4)"/>
+                        </span>
+                    </div>
                 </div>
             </div>
         </div>
     </t>
 
+    <!-- AI Typed Response Card — renders _type: text/table/fields/html/image/attachment/cards/mixed -->
+    <t t-name="mcp_gateway.AssistantResponseCard">
+        <div class="mcp-ai-response">
+            <t t-if="message.structuredData._type === 'text'">
+                <p class="mb-0" style="white-space: pre-wrap;"><t t-esc="message.structuredData.content"/></p>
+            </t>
+            <t t-elif="message.structuredData._type === 'table'">
+                <t t-if="message.structuredData.title">
+                    <div class="mcp-ai-response-title"><t t-esc="message.structuredData.title"/></div>
+                </t>
+                <div class="mcp-result-scroll">
+                    <table class="table table-sm table-bordered mcp-result-table">
+                        <thead><tr>
+                            <t t-foreach="message.structuredData.headers || []" t-as="h" t-key="h_index">
+                                <th><t t-esc="h"/></th>
+                            </t>
+                        </tr></thead>
+                        <tbody>
+                            <t t-foreach="message.structuredData.rows || []" t-as="row" t-key="row_index">
+                                <tr>
+                                    <t t-foreach="row" t-as="cell" t-key="cell_index">
+                                        <td><t t-esc="cell"/></td>
+                                    </t>
+                                </tr>
+                            </t>
+                        </tbody>
+                    </table>
+                </div>
+            </t>
+            <t t-elif="message.structuredData._type === 'fields'">
+                <t t-if="message.structuredData.title">
+                    <div class="mcp-ai-response-title"><t t-esc="message.structuredData.title"/></div>
+                </t>
+                <table class="table table-sm mcp-result-table">
+                    <tbody>
+                        <t t-foreach="Object.entries(message.structuredData.data || {})" t-as="entry" t-key="entry[0]">
+                            <tr>
+                                <td class="fw-bold text-muted" style="width:38%"><t t-esc="entry[0]"/></td>
+                                <td><t t-esc="entry[1]"/></td>
+                            </tr>
+                        </t>
+                    </tbody>
+                </table>
+            </t>
+            <t t-elif="message.structuredData._type === 'html'">
+                <div class="mcp-ai-html"><t t-out="message.structuredData.content"/></div>
+            </t>
+            <t t-elif="message.structuredData._type === 'image'">
+                <img t-att-src="message.structuredData.url"
+                     t-att-alt="message.structuredData.alt || 'Image'"
+                     class="mcp-ai-image img-fluid rounded"/>
+            </t>
+            <t t-elif="message.structuredData._type === 'attachment'">
+                <div class="mcp-ai-attachment">
+                    <i t-attf-class="fa {{ message.structuredData.mimetype === 'application/pdf' ? 'fa-file-pdf-o text-danger' : 'fa-file-word-o text-primary' }} fa-2x me-3"/>
+                    <div>
+                        <div class="fw-bold"><t t-esc="message.structuredData.filename"/></div>
+                        <a t-att-href="message.structuredData.url" target="_blank" class="small text-primary">
+                            <t t-if="message.structuredData.mimetype === 'application/pdf'">View PDF</t>
+                            <t t-else="">Download</t>
+                        </a>
+                    </div>
+                </div>
+                <t t-if="message.structuredData.mimetype === 'application/pdf'">
+                    <iframe t-att-src="message.structuredData.url + '#toolbar=0'"
+                            class="mcp-ai-pdf-preview" title="PDF Preview"/>
+                </t>
+            </t>
+            <t t-elif="message.structuredData._type === 'cards'">
+                <t t-if="message.structuredData.title">
+                    <div class="mcp-ai-response-title"><t t-esc="message.structuredData.title"/></div>
+                </t>
+                <div class="mcp-ai-cards-grid">
+                    <t t-foreach="message.structuredData.items || []" t-as="card" t-key="card_index">
+                        <div class="mcp-ai-card">
+                            <t t-if="card.image_url">
+                                <img t-att-src="card.image_url" class="mcp-ai-card-img img-fluid rounded mb-1" t-att-alt="card.title || 'Image'"/>
+                            </t>
+                            <div class="fw-bold small"><t t-esc="card.title"/></div>
+                            <t t-if="card.subtitle">
+                                <div class="text-muted small"><t t-esc="card.subtitle"/></div>
+                            </t>
+                            <t t-if="card.fields">
+                                <t t-foreach="Object.entries(card.fields)" t-as="kv" t-key="kv[0]">
+                                    <div class="small"><span class="text-muted"><t t-esc="kv[0]"/>: </span><t t-esc="kv[1]"/></div>
+                                </t>
+                            </t>
+                        </div>
+                    </t>
+                </div>
+            </t>
+            <t t-elif="message.structuredData._type === 'mixed'">
+                <t t-foreach="message.structuredData.blocks || []" t-as="block" t-key="block_index">
+                    <div class="mb-2">
+                        <t t-call="mcp_gateway.AssistantResponseCard">
+                            <t t-set="message" t-value="{structuredData: block}"/>
+                        </t>
+                    </div>
+                </t>
+            </t>
+            <t t-else="">
+                <p class="mb-0 text-muted small" style="font-family: monospace; white-space: pre-wrap;">
+                    <t t-esc="JSON.stringify(message.structuredData, null, 2)"/>
+                </p>
+            </t>
+        </div>
+    </t>
+
+    <!-- Shared Tool Result Card (used by both assistant and tool_result message roles) -->
+    <t t-name="mcp_gateway.ToolResultCard">
+        <div class="mcp-tool-result">
+            <!-- Error state — check first -->
+            <t t-if="message.structuredData.success === false">
+                <div class="mcp-tool-result-header text-danger">
+                    <i class="fa fa-times-circle me-2"/>
+                    <b><t t-esc="message.structuredData.tool_name || 'Tool'"/></b> failed
+                </div>
+                <div class="alert alert-danger py-1 px-2 small mt-1 mb-0">
+                    <t t-esc="message.structuredData.error"/>
+                </div>
+            </t>
+            <!-- search_read -->
+            <t t-elif="message.structuredData.tool_name === 'search_read'">
+                <div class="mcp-tool-result-header">
+                    <i class="fa fa-table me-2"/>
+                    <b><t t-esc="message.structuredData.count"/> record(s) from <t t-esc="message.structuredData.model"/></b>
+                </div>
+                <t t-if="message.structuredData.records and message.structuredData.records.length > 0">
+                    <div class="mcp-result-scroll">
+                        <table class="table table-sm table-bordered mcp-result-table">
+                            <thead>
+                                <tr>
+                                    <t t-foreach="Object.keys(message.structuredData.records[0])" t-as="col" t-key="col">
+                                        <th><t t-esc="col"/></th>
+                                    </t>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <t t-foreach="message.structuredData.records" t-as="row" t-key="row_index">
+                                    <tr>
+                                        <t t-foreach="Object.keys(row)" t-as="col" t-key="col">
+                                            <t t-set="ft" t-value="message.structuredData.field_types and message.structuredData.field_types[col]"/>
+                                            <td>
+                                                <t t-if="ft and ft.type === 'binary' and typeof row[col] === 'string' and row[col].startsWith('/')">
+                                                    <img t-att-src="row[col]" style="height:40px;width:40px;object-fit:contain;border-radius:4px;"/>
+                                                </t>
+                                                <t t-elif="ft and ft.type === 'boolean'">
+                                                    <span t-att-class="row[col] ? 'text-success fw-bold' : 'text-muted'"><t t-esc="row[col] ? '✓' : '—'"/></span>
+                                                </t>
+                                                <t t-elif="ft and ft.type === 'selection'">
+                                                    <span t-att-class="'badge ' + (['done','paid','posted','sale','open','confirm'].includes(row[col]) ? 'bg-success' : ['cancel','cancelled','refused'].includes(row[col]) ? 'bg-danger' : ['draft','new'].includes(row[col]) ? 'bg-secondary' : 'bg-primary')"><t t-esc="row[col]"/></span>
+                                                </t>
+                                                <t t-elif="ft and ft.type === 'html'">
+                                                    <span t-out="row[col]"/>
+                                                </t>
+                                                <t t-else="">
+                                                    <t t-esc="this._formatCellValue(row[col], ft, row)"/>
+                                                </t>
+                                            </td>
+                                        </t>
+                                    </tr>
+                                </t>
+                            </tbody>
+                        </table>
+                    </div>
+                </t>
+                <t t-else="">
+                    <p class="text-muted fst-italic mb-0">No records found.</p>
+                </t>
+            </t>
+            <!-- read_record -->
+            <t t-elif="message.structuredData.tool_name === 'read_record'">
+                <div class="mcp-tool-result-header">
+                    <i class="fa fa-file-text me-2"/>
+                    Record <b>#<t t-esc="message.structuredData.res_id"/></b> — <b><t t-esc="message.structuredData.model"/></b>
+                </div>
+                <t t-if="message.structuredData.record">
+                    <table class="table table-sm mcp-result-table">
+                        <tbody>
+                            <t t-foreach="Object.entries(message.structuredData.record)" t-as="entry" t-key="entry[0]">
+                                <t t-set="ft" t-value="message.structuredData.field_types and message.structuredData.field_types[entry[0]]"/>
+                                <tr>
+                                    <td class="fw-bold text-muted" style="width: 35%"><t t-esc="entry[0]"/></td>
+                                    <td>
+                                        <t t-if="ft and ft.type === 'binary' and typeof entry[1] === 'string' and entry[1].startsWith('/')">
+                                            <img t-att-src="entry[1]" style="height:60px;max-width:120px;object-fit:contain;border-radius:4px;"/>
+                                        </t>
+                                        <t t-elif="ft and ft.type === 'boolean'">
+                                            <span t-att-class="entry[1] ? 'text-success fw-bold' : 'text-muted'"><t t-esc="entry[1] ? '✓' : '—'"/></span>
+                                        </t>
+                                        <t t-elif="ft and ft.type === 'selection'">
+                                            <span t-att-class="'badge ' + (['done','paid','posted','sale','open','confirm'].includes(entry[1]) ? 'bg-success' : ['cancel','cancelled','refused'].includes(entry[1]) ? 'bg-danger' : ['draft','new'].includes(entry[1]) ? 'bg-secondary' : 'bg-primary')"><t t-esc="entry[1]"/></span>
+                                        </t>
+                                        <t t-elif="ft and ft.type === 'html'">
+                                            <span t-out="entry[1]"/>
+                                        </t>
+                                        <t t-else="">
+                                            <t t-esc="this._formatCellValue(entry[1], ft, message.structuredData.record)"/>
+                                        </t>
+                                    </td>
+                                </tr>
+                            </t>
+                        </tbody>
+                    </table>
+                </t>
+            </t>
+            <!-- read_group -->
+            <t t-elif="message.structuredData.tool_name === 'read_group'">
+                <div class="mcp-tool-result-header">
+                    <i class="fa fa-bar-chart me-2"/>
+                    <b><t t-esc="(message.structuredData.result || []).length"/> group(s)</b>
+                </div>
+                <t t-if="message.structuredData.result and message.structuredData.result.length > 0">
+                    <div class="mcp-result-scroll">
+                        <table class="table table-sm table-bordered mcp-result-table">
+                            <thead>
+                                <tr>
+                                    <t t-foreach="Object.keys(message.structuredData.result[0]).filter(k => !k.startsWith('__'))" t-as="col" t-key="col">
+                                        <th><t t-esc="col"/></th>
+                                    </t>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <t t-foreach="message.structuredData.result" t-as="row" t-key="row_index">
+                                    <tr>
+                                        <t t-foreach="Object.entries(row).filter(([k]) => !k.startsWith('__'))" t-as="entry" t-key="entry[0]">
+                                            <td><t t-esc="Array.isArray(entry[1]) ? entry[1][entry[1].length - 1] : entry[1]"/></td>
+                                        </t>
+                                    </tr>
+                                </t>
+                            </tbody>
+                        </table>
+                    </div>
+                </t>
+                <t t-else="">
+                    <p class="text-muted fst-italic mb-0">No groups found.</p>
+                </t>
+            </t>
+            <!-- create_record -->
+            <t t-elif="message.structuredData.tool_name === 'create_record'">
+                <div class="mcp-tool-result-header">
+                    <i class="fa fa-check-circle text-success me-2"/>
+                    Created in <b><t t-esc="message.structuredData.model"/></b> — ID <b>#<t t-esc="message.structuredData.id"/></b>
+                </div>
+            </t>
+            <!-- update_record -->
+            <t t-elif="message.structuredData.tool_name === 'update_record'">
+                <div class="mcp-tool-result-header">
+                    <i class="fa fa-pencil text-info me-2"/>
+                    <b><t t-esc="message.structuredData.count"/></b> record(s) updated in <b><t t-esc="message.structuredData.model"/></b>
+                </div>
+            </t>
+            <!-- delete_record -->
+            <t t-elif="message.structuredData.tool_name === 'delete_record'">
+                <div class="mcp-tool-result-header">
+                    <i class="fa fa-trash text-danger me-2"/>
+                    <b><t t-esc="message.structuredData.count"/></b> record(s) deleted from <b><t t-esc="message.structuredData.model"/></b>
+                </div>
+            </t>
+            <!-- list_models -->
+            <t t-elif="message.structuredData.tool_name === 'list_models'">
+                <div class="mcp-tool-result-header">
+                    <i class="fa fa-list me-2"/>
+                    <b><t t-esc="message.structuredData.count"/> models available</b>
+                </div>
+                <div class="mcp-model-list mt-2">
+                    <t t-foreach="message.structuredData.models" t-as="m" t-key="m_index">
+                        <span class="badge bg-light text-dark border me-1 mb-1">
+                            <t t-esc="typeof m === 'object' ? (m.model || m.name) : m"/>
+                        </span>
+                    </t>
+                </div>
+            </t>
+            <!-- get_model_schema -->
+            <t t-elif="message.structuredData.tool_name === 'get_model_schema'">
+                <div class="mcp-tool-result-header">
+                    <i class="fa fa-code me-2"/>
+                    Schema: <b><t t-esc="message.structuredData.model"/></b>
+                    (<t t-esc="Object.keys(message.structuredData.schema || {}).length"/> fields)
+                </div>
+                <div class="mcp-result-scroll">
+                    <table class="table table-sm table-bordered mcp-result-table">
+                        <thead>
+                            <tr><th>Field</th><th>Type</th><th>Label</th><th>Relation</th></tr>
+                        </thead>
+                        <tbody>
+                            <t t-foreach="Object.entries(message.structuredData.schema || {})" t-as="entry" t-key="entry[0]">
+                                <tr>
+                                    <td class="font-monospace small"><t t-esc="entry[0]"/></td>
+                                    <td><span class="badge bg-secondary"><t t-esc="entry[1].type || ''"/></span></td>
+                                    <td><t t-esc="entry[1].string || ''"/></td>
+                                    <td class="text-muted small"><t t-esc="entry[1].relation || ''"/></td>
+                                </tr>
+                            </t>
+                        </tbody>
+                    </table>
+                </div>
+            </t>
+            <!-- generic fallback — shows JSON result -->
+            <t t-else="">
+                <div class="mcp-tool-result-header">
+                    <i class="fa fa-check text-success me-2"/>
+                    <b><t t-esc="message.structuredData.tool_name"/></b> completed
+                </div>
+                <t t-if="message.structuredData.result !== undefined and message.structuredData.result !== null">
+                    <pre class="mcp-code-snippet mt-2"><t t-esc="JSON.stringify(message.structuredData.result, null, 2)"/></pre>
+                </t>
+            </t>
+        </div>
+    </t>
+
     <!-- Message Bubble Component -->
     <t t-name="mcp_gateway.MessageBubble">
-        <div t-attf-class="mcp-{{ message.role }}-msg">
+        <div t-attf-class="mcp-{{ message.role === 'tool_result' ? 'assistant' : message.role }}-msg">
             <t t-if="message.role === 'user'">
-                <strong>You:</strong>
                 <t t-esc="message.content"/>
             </t>
             <t t-elif="message.role === 'assistant'">
-                <strong>Agent:</strong>
-                <t t-esc="message.content"/>
+                <t t-if="message.structuredData and message.structuredData._is_structured">
+                    <t t-call="mcp_gateway.ToolResultCard"/>
+                </t>
+                <t t-elif="message.structuredData and message.structuredData._type">
+                    <t t-call="mcp_gateway.AssistantResponseCard"/>
+                </t>
+                <t t-else="">
+                    <t t-out="message.content"/>
+                </t>
+            </t>
+            <t t-elif="message.role === 'tool_result'">
+                <t t-if="message.structuredData">
+                    <t t-call="mcp_gateway.ToolResultCard"/>
+                </t>
+            </t>
+            <t t-elif="message.role === 'system'">
+                <div class="mcp-system-content">
+                    <t t-out="message.content"/>
+                </div>
             </t>
             <t t-elif="message.role === 'tool_call'">
-                🔧 <em><t t-esc="message.tool_name"/></em>
+                <!-- hidden from user view -->
             </t>
         </div>
     </t>

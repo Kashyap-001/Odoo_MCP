@@ -30,6 +30,7 @@ from . import mcp_webhook_trigger
 from . import mcp_cost_entry
 from . import mcp_external_server
 from . import mcp_issue
+from . import mcp_echart
 
 __all__ = [
     'mcp_tool_category',
@@ -44,4 +45,6 @@ __all__ = [
     'mcp_cost_entry',
     'mcp_external_server',
     'mcp_issue',
+    'mcp_echart',
 ]
+

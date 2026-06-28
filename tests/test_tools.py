@@ -35,6 +35,7 @@ class TestToolRegistry(TransactionCase):
         tool = self.env['mcp.tool'].create({
             'name': 'test_tool',
             'display_name_label': 'Test Tool',
+            'description': 'Test tool description',
             'category_id': self.category.id,
             'tool_type': 'odoo',
             'odoo_model': 'res.partner',
@@ -50,6 +51,8 @@ class TestToolRegistry(TransactionCase):
         with self.assertRaises(ValidationError):
             self.env['mcp.tool'].create({
                 'name': 'InvalidToolName',  # Should be invalid_tool_name
+                'display_name_label': 'Invalid Tool Name',
+                'description': 'Test description',
                 'category_id': self.category.id,
                 'tool_type': 'odoo',
             })
@@ -59,6 +62,8 @@ class TestToolRegistry(TransactionCase):
         with self.assertRaises(ValidationError):
             self.env['mcp.tool'].create({
                 'name': 'bad_schema_tool',
+                'display_name_label': 'Bad Schema Tool',
+                'description': 'Test description',
                 'category_id': self.category.id,
                 'tool_type': 'odoo',
                 'input_schema': '{invalid json}',  # Invalid JSON
@@ -67,8 +72,8 @@ class TestToolRegistry(TransactionCase):
     def test_tool_spec_generation(self):
         """Test tool spec generation for provider."""
         tool = self.env['mcp.tool'].create({
-            'name': 'partner_search',
-            'display_name_label': 'Search Partners',
+            'name': 'partner_search_test',
+            'display_name_label': 'Search Partners Test',
             'category_id': self.category.id,
             'tool_type': 'odoo',
             'description': 'Search for business partners',
@@ -82,7 +87,7 @@ class TestToolRegistry(TransactionCase):
 
         spec = tool.get_tool_spec()
 
-        self.assertEqual(spec['name'], 'partner_search')
+        self.assertEqual(spec['name'], 'partner_search_test')
         self.assertEqual(spec['description'], 'Search for business partners')
         self.assertIn('input_schema', spec)
 
@@ -96,21 +101,25 @@ class TestToolDispatch(TransactionCase):
 
     def test_dispatch_odoo_tool(self):
         """Test dispatching Odoo ORM tool."""
-        tool = self.env['mcp.tool'].create({
-            'name': 'partner_search',
-            'category_id': self.category.id,
-            'tool_type': 'odoo',
-            'odoo_model': 'res.partner',
-            'odoo_method': 'search_read',
-            'odoo_fields': ['id', 'name', 'email'],
-        })
+        # Using search_read (one of the 18 generic tools)
+        tool = self.env['mcp.tool'].search([('name', '=', 'search_read')], limit=1)
+        if not tool:
+            tool = self.env['mcp.tool'].create({
+                'name': 'search_read',
+                'display_name_label': 'Search Records',
+                'description': 'Query Odoo database records',
+                'category_id': self.category.id,
+                'tool_type': 'odoo',
+                'odoo_model': 'ir.model',
+                'odoo_method': 'search_read',
+            })
 
-        from mcp.tools.dispatcher import ToolDispatcher
+        from ..mcp.tools.dispatcher import ToolDispatcher
         dispatcher = ToolDispatcher()
 
         result = dispatcher.dispatch(
             tool,
-            {'fields': ['id', 'name'], 'limit': 5},
+            {'model': 'res.partner', 'fields': ['id', 'name'], 'limit': 5},
             self.env,
             self.env.user,
         )
@@ -128,13 +137,15 @@ class TestToolDispatch(TransactionCase):
 
         tool = self.env['mcp.tool'].create({
             'name': 'external_api_call',
+            'display_name_label': 'External API Call',
+            'description': 'External API Call description',
             'category_id': self.category.id,
             'tool_type': 'external',
-            'external_url': 'https://api.example.com/endpoint',
-            'external_auth_type': 'none',
+            'endpoint_url': 'https://api.example.com/endpoint',
+            'auth_type': 'none',
         })
 
-        from mcp.tools.dispatcher import ToolDispatcher
+        from ..mcp.tools.dispatcher import ToolDispatcher
         dispatcher = ToolDispatcher()
 
         result = dispatcher.dispatch(
@@ -151,13 +162,15 @@ class TestToolDispatch(TransactionCase):
         """Test tool execution error handling."""
         tool = self.env['mcp.tool'].create({
             'name': 'error_tool',
+            'display_name_label': 'Error Tool',
+            'description': 'Error Tool description',
             'category_id': self.category.id,
             'tool_type': 'odoo',
             'odoo_model': 'nonexistent.model',  # Invalid model
             'odoo_method': 'search_read',
         })
 
-        from mcp.tools.dispatcher import ToolDispatcher
+        from ..mcp.tools.dispatcher import ToolDispatcher
         dispatcher = ToolDispatcher()
 
         result = dispatcher.dispatch(
@@ -174,82 +187,37 @@ class TestToolDispatch(TransactionCase):
 
 
 class TestToolDescriptions(TransactionCase):
-    """Test F1 description standard for most-used tools."""
+    """Test description standard for most-used tools."""
 
-    def test_partner_search_description_f1(self):
-        """Test partner_search follows F1: has category, trigger, Do NOT, Returns."""
-        tool = self.env['mcp.tool'].search([('name', '=', 'partner_search')], limit=1)
+    def test_generic_tools_description(self):
+        """Test new generic tools are registered and have description."""
+        tool = self.env['mcp.tool'].search([('name', '=', 'search_read')], limit=1)
         if not tool:
             self.skipTest("Tool not installed")
 
         desc = tool.description
-        self.assertIn('[SALES', desc)
-        self.assertIn('Use this tool when the user wants to', desc)
-        self.assertIn('Do NOT use', desc)
-        self.assertIn('Returns:', desc)
-
-    def test_partner_create_description_f1(self):
-        """Test partner_create follows F1 format."""
-        tool = self.env['mcp.tool'].search([('name', '=', 'partner_create')], limit=1)
-        if not tool:
-            self.skipTest("Tool not installed")
-
-        desc = tool.description
-        self.assertIn('[SALES', desc)
-        self.assertIn('Use this tool when the user wants to', desc)
-        self.assertIn('Do NOT use', desc)
-        self.assertIn('Returns:', desc)
-
-    def test_sale_order_search_description_f1(self):
-        """Test sale_order_search follows F1 format."""
-        tool = self.env['mcp.tool'].search([('name', '=', 'sale_order_search')], limit=1)
-        if not tool:
-            self.skipTest("Tool not installed")
-
-        desc = tool.description
-        self.assertIn('[SALES', desc)
-        self.assertIn('Use this tool when the user wants to', desc)
-        self.assertIn('Do NOT use', desc)
-
-    def test_invoice_search_description_f1(self):
-        """Test invoice_search follows F1 format."""
-        tool = self.env['mcp.tool'].search([('name', '=', 'invoice_search')], limit=1)
-        if not tool:
-            self.skipTest("Tool not installed")
-
-        desc = tool.description
-        self.assertIn('[FINANCE]', desc)
-        self.assertIn('Use this tool when the user wants to', desc)
-        self.assertIn('Do NOT use', desc)
-
-    def test_calendar_event_create_description_f1(self):
-        """Test calendar_event_create follows F1 format."""
-        tool = self.env['mcp.tool'].search([('name', '=', 'calendar_event_create')], limit=1)
-        if not tool:
-            self.skipTest("Tool not installed")
-
-        desc = tool.description
-        self.assertIn('[HR', desc)
-        self.assertIn('Use this tool when the user wants to', desc)
-        self.assertIn('Do NOT use', desc)
+        self.assertIsNotNone(desc)
+        self.assertIn('Query Odoo database records', desc)
 
 
 class TestToolDispatcherDatetime(TransactionCase):
-    """Test F2 datetime handling in dispatcher."""
+    """Test datetime handling in dispatcher."""
 
     def setUp(self):
         super().setUp()
-        self.dispatcher = self.env['mcp.tool'].env['mcp.tools.dispatcher'].ToolDispatcher()
+        from ..mcp.tools.dispatcher import ToolDispatcher
+        self.dispatcher = ToolDispatcher()
         self.category = self.env['mcp.tool.category'].create({'name': 'Test'})
 
     @mock.patch('odoo.models.BaseModel.search_read')
     def test_calendar_event_datetime_parsing(self, mock_search_read):
-        """Test calendar_event_create parses datetime strings correctly."""
+        """Test search_read parses datetime strings correctly."""
         mock_search_read.return_value = [{'id': 1, 'name': 'Test Event'}]
 
         tool = self.env['mcp.tool'].create({
             'name': 'calendar_test',
             'display_name_label': 'Test',
+            'description': 'Calendar test description',
             'category_id': self.category.id,
             'tool_type': 'odoo',
             'odoo_model': 'calendar.event',
@@ -258,35 +226,22 @@ class TestToolDispatcherDatetime(TransactionCase):
 
         result = self.dispatcher.dispatch(
             tool,
-            {'start': '2025-06-15 14:00:00', 'stop': '2025-06-15 15:00:00'},
+            {'model': 'calendar.event', 'domain': [['start', '>=', '2025-01-15 00:00:00']]},
             self.env,
             self.env.user,
         )
 
         result_data = json.loads(result)
-        self.assertTrue(result_data.get('success'))
+        self.assertTrue(result_data['success'])
 
-    def test_prepare_create_values_datetime(self):
-        """Test _prepare_create_values parses datetime strings."""
-        tool = self.env['mcp.tool'].create({
-            'name': 'test_datetime',
-            'display_name_label': 'Test',
-            'category_id': self.category.id,
-            'tool_type': 'odoo',
-            'odoo_model': 'calendar.event',
-            'odoo_method': 'create',
-        })
+    def test_datetime_formatting_utility(self):
+        """Test datetime formats are correctly converted."""
+        # Test helper date/datetime parsers
+        parsed_dt = self.dispatcher._parse_datetime('2025-01-15T09:00:00Z')
+        parsed_d = self.dispatcher._parse_date('2025-01-15')
 
-        result = self.dispatcher._prepare_create_values({
-            'name': 'Test Event',
-            'start': '2025-06-15 14:00:00',
-            'stop': '2025-06-15 15:00:00',
-            'partner_ids': [1, 2, 3],
-        }, 'calendar.event')
-
-        self.assertIsInstance(result['start'], datetime)
-        self.assertIsInstance(result['stop'], datetime)
-        self.assertIsInstance(result['partner_ids'], tuple)  # Command.set() returns tuple
+        self.assertIsInstance(parsed_dt, datetime)
+        self.assertIsInstance(parsed_d, date)
 
 
 class TestToolDispatcherErrors(TransactionCase):
@@ -294,7 +249,8 @@ class TestToolDispatcherErrors(TransactionCase):
 
     def setUp(self):
         super().setUp()
-        self.dispatcher = self.env['mcp.tool'].env['mcp.tools.dispatcher'].ToolDispatcher()
+        from ..mcp.tools.dispatcher import ToolDispatcher
+        self.dispatcher = ToolDispatcher()
         self.category = self.env['mcp.tool.category'].create({'name': 'Test'})
 
     def test_odoo_invalid_model_returns_error_dict(self):
@@ -302,6 +258,7 @@ class TestToolDispatcherErrors(TransactionCase):
         tool = self.env['mcp.tool'].create({
             'name': 'test_invalid',
             'display_name_label': 'Test',
+            'description': 'Test invalid description',
             'category_id': self.category.id,
             'tool_type': 'odoo',
             'odoo_model': 'nonexistent.model.that.does.not.exist',
@@ -320,6 +277,7 @@ class TestToolDispatcherErrors(TransactionCase):
         tool = self.env['mcp.tool'].create({
             'name': 'test_bad_method',
             'display_name_label': 'Test',
+            'description': 'Test description',
             'category_id': self.category.id,
             'tool_type': 'odoo',
             'odoo_model': 'res.partner',
@@ -341,6 +299,7 @@ class TestToolDispatcherErrors(TransactionCase):
         tool = self.env['mcp.tool'].create({
             'name': 'test_external',
             'display_name_label': 'Test',
+            'description': 'Test description',
             'category_id': self.category.id,
             'tool_type': 'external',
             'endpoint_url': 'https://bad.url.fake/api',
@@ -362,6 +321,7 @@ class TestToolDispatcherErrors(TransactionCase):
         tool = self.env['mcp.tool'].create({
             'name': 'test_mcp',
             'display_name_label': 'Test',
+            'description': 'Test description',
             'category_id': self.category.id,
             'tool_type': 'mcp_server',
             'mcp_server_url': 'http://localhost:9999',

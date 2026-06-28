@@ -1,0 +1,30 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+
+# Odoo
+*.log
+*.pot
+
+# Vault symlinks (link-brain.sh artifacts — don't commit the brain)
+.agents/
+.agy/
+HANDOFF.md
+
+# Secrets
+.env
+*.key
+*.pem
+
+# Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db

@@ -239,6 +239,12 @@ class WebhookTrigger(models.Model):
         """
         from ..mcp.gateway import McpGateway
 
+        if record._name != self.trigger_model:
+            raise exceptions.ValidationError(
+                _('Model mismatch: webhook trigger expects %s, got %s')
+                % (self.trigger_model, record._name)
+            )
+
         try:
             message = self._get_message(record)
             session = self.env['mcp.session'].create({

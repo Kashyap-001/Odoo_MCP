@@ -170,7 +170,7 @@ class OllamaAdapter(AbstractProvider):
             UserError: if Ollama is not running or unreachable
         """
         try:
-            base_url = agent.api_base_url or 'http://localhost:11434'
+            base_url = agent.api_base_url
             url = f'{base_url}/api/tags'
             response = requests.get(url, timeout=5)
             response.raise_for_status()
@@ -204,7 +204,7 @@ class OllamaAdapter(AbstractProvider):
         try:
             headers = self.build_headers(agent)
             payload = self.build_payload(messages, tool_specs, agent)
-            base_url = agent.api_base_url or 'http://localhost:11434'
+            base_url = agent.api_base_url
             url = f'{base_url}/api/chat'
 
             max_retries = 2

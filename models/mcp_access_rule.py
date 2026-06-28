@@ -169,19 +169,22 @@ class AccessRule(models.Model):
         can_export = False
         rate_limit_day = 0
         rate_limit_month = 0
+        
+        has_allow_all_agents = False
+        has_allow_all_tools = False
 
         for rule in matching_rules:
             # Agents: if rule has specific agents, OR them; if empty, allow all
             if rule.agent_ids:
                 agent_ids = agent_ids | rule.agent_ids
             else:
-                # Empty agent_ids in rule = all agents allowed, set to empty recordset
-                # and mark that we should allow all (handled by check_access logic)
-                pass
+                has_allow_all_agents = True
 
             # Tools: same logic
             if rule.tool_ids:
                 tool_ids = tool_ids | rule.tool_ids
+            else:
+                has_allow_all_tools = True
 
             can_view_sessions = can_view_sessions or rule.can_view_sessions
             can_export = can_export or rule.can_export
@@ -206,4 +209,7 @@ class AccessRule(models.Model):
             'can_export': can_export,
             'rate_limit_day': rate_limit_day,
             'rate_limit_month': rate_limit_month,
+            'rules_matched': bool(matching_rules),
+            'all_agents_allowed': has_allow_all_agents,
+            'all_tools_allowed': has_allow_all_tools,
         }

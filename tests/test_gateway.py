@@ -34,7 +34,7 @@ class TestGatewayRun(TransactionCase):
             'system_prompt': 'You are a helpful assistant.',
         })
 
-    @mock.patch('mcp.providers.openai.OpenAIProvider.call')
+    @mock.patch('odoo.addons.mcp_gateway.mcp.providers.openai.OpenAIAdapter.call')
     def test_gateway_run_basic(self, mock_call):
         """Test basic gateway run with mocked provider."""
         mock_call.return_value = {
@@ -57,6 +57,32 @@ class TestGatewayRun(TransactionCase):
         self.assertEqual(result['input_tokens'], 10)
         self.assertEqual(result['output_tokens'], 5)
 
+    def _create_test_user(self, name, login, groups=None):
+        self.env.cr.execute("""
+            SELECT column_name 
+            FROM information_schema.columns 
+            WHERE table_name='res_partner' AND column_name='autopost_bills'
+        """)
+        if self.env.cr.fetchone():
+            self.env.cr.execute("""
+                INSERT INTO res_partner (name, active, autopost_bills, create_date, write_date, create_uid, write_uid) 
+                VALUES (%s, True, 'never', now(), now(), %s, %s) RETURNING id
+            """, (name, self.env.uid, self.env.uid))
+            partner_id = self.env.cr.fetchone()[0]
+            partner = self.env['res.partner'].browse(partner_id)
+        else:
+            partner_vals = {
+                'name': name,
+            }
+            partner = self.env['res.partner'].create(partner_vals)
+        user_vals = {
+            'login': login,
+            'partner_id': partner.id,
+        }
+        if groups:
+            user_vals['groups_id'] = [(4, g) for g in groups]
+        return self.env['res.users'].create(user_vals)
+
     def test_gateway_access_denied(self):
         """Test gateway denies access for unauthorized users."""
         # Create restricted agent
@@ -65,33 +91,34 @@ class TestGatewayRun(TransactionCase):
             'provider': 'openai',
             'api_key': 'sk-test',
             'model_name': 'gpt-4',
+            'description': 'Restricted Agent Description',
         })
 
-        # Create access rule denying current user
-        group = self.env.ref('base.group_system')
-        self.env['mcp.access.rule'].create({
-            'name': 'Deny Test User',
-            'group_id': group.id,
-            'agent_ids': [],  # Empty = no access
-        })
+        # Create a non-admin user
+        non_admin_group = self.env['res.groups'].create({'name': 'Test Non-Admin Group'})
+        user = self._create_test_user('Test User', 'test_user', [non_admin_group.id])
 
-        gateway = McpGateway(self.env, self.env.user)
+        gateway = McpGateway(self.env, user)
 
         with self.assertRaises(AccessError):
             gateway.run(agent_id=restricted_agent.id, user_message='Test')
 
-    @mock.patch('mcp.providers.openai.OpenAIProvider.call')
+    @mock.patch('odoo.addons.mcp_gateway.mcp.providers.openai.OpenAIAdapter.call')
     def test_gateway_rate_limit(self, mock_call):
         """Test rate limiting enforcement."""
-        # Set rate limit to 1 call/day
-        group = self.env.ref('base.group_system')
+        # Create a non-admin user and group
+        user_group = self.env['res.groups'].create({'name': 'Rate Limit Group'})
+        user = self._create_test_user('Rate Limit User', 'rate_limit_user', [user_group.id])
+
+        # Set rate limit to 1 call/day for this group and grant access to the agent
         self.env['mcp.access.rule'].create({
             'name': 'Limited Rule',
-            'group_id': group.id,
+            'group_ids': [(4, user_group.id)],
+            'agent_ids': [(4, self.agent.id)],
             'rate_limit_day': 1,
         })
 
-        gateway = McpGateway(self.env, self.env.user)
+        gateway = McpGateway(self.env, user)
 
         mock_call.return_value = {
             'text': 'Result 1',
@@ -123,11 +150,12 @@ class TestContextInjection(TransactionCase):
             'context_fields': json.dumps(['name', 'email']),
         })
 
-    @mock.patch('mcp.providers.openai.OpenAIProvider.call')
+    @mock.patch('odoo.addons.mcp_gateway.mcp.providers.openai.OpenAIAdapter.call')
     def test_context_injection(self, mock_call):
         """Test active record context is injected."""
-        # Create test partner
-        partner = self.env['res.partner'].create({
+        # Use existing partner to avoid NotNullViolation constraints on partner creation
+        partner = self.env.user.partner_id
+        partner.write({
             'name': 'Test Partner',
             'email': 'test@example.com',
         })

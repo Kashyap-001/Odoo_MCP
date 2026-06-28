@@ -16,6 +16,7 @@ Developer notes:
   - Uses official openai SDK for reliable API calls
 """
 
+import json
 import logging
 from .base import AbstractProvider
 from odoo import _

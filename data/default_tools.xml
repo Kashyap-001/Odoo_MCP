@@ -1,348 +1,349 @@
 <?xml version="1.0" encoding="utf-8"?>
 <odoo>
-    <data noupdate="1">
+    <data noupdate="0">
 
         <!-- ──────────────────────────────────────────────────────────────── -->
         <!-- TOOL CATEGORIES                                                  -->
         <!-- ──────────────────────────────────────────────────────────────── -->
 
-        <record id="category_sales_crm" model="mcp.tool.category">
-            <field name="name">Sales &amp; CRM</field>
-            <field name="description">Sales, CRM, and customer management tools</field>
+        <record id="category_read" model="mcp.tool.category">
+            <field name="name">Read Database Tools</field>
+            <field name="description">Tools to read, list, and query Odoo models and records</field>
         </record>
 
-        <record id="category_finance" model="mcp.tool.category">
-            <field name="name">Finance &amp; Accounting</field>
-            <field name="description">Invoice, payment, and accounting tools</field>
+        <record id="category_write" model="mcp.tool.category">
+            <field name="name">Write Database Tools</field>
+            <field name="description">Tools to create, update, delete, and execute methods on database records</field>
         </record>
 
-        <record id="category_operations" model="mcp.tool.category">
-            <field name="name">Operations &amp; HR</field>
-            <field name="description">Inventory, HR, and operational tools</field>
+        <record id="category_code" model="mcp.tool.category">
+            <field name="name">Code Inspection Tools</field>
+            <field name="description">Tools to inspect and search custom module and addons code</field>
+        </record>
+
+        <record id="category_advanced" model="mcp.tool.category">
+            <field name="name">Advanced &amp; Sandbox Tools</field>
+            <field name="description">High-risk tools including safe_eval scripting, EChart visualizations, module compilers, and subagent queries</field>
         </record>
 
         <!-- ──────────────────────────────────────────────────────────────── -->
-        <!-- SALES &amp; CRM TOOLS (7 tools)                                      -->
+        <!-- READ DATABASE TOOLS                                              -->
         <!-- ──────────────────────────────────────────────────────────────── -->
 
-        <record id="tool_partner_search" model="mcp.tool">
-            <field name="name">partner_search</field>
-            <field name="display_name_label">Search Partners</field>
-            <field name="description">[SALES &amp; CRM] Use this tool when the user wants to find, look up, search for, or get information about existing customers, suppliers, vendors, or contacts. Trigger phrases: "find customer", "search for partner", "lookup client", "show me [name]", "who is", "contact details", "customer info". Do NOT use this tool to create new partners (use partner_create) or to view specific record details by ID (use partner_details). Returns: list of matching partners with ID, name, email, phone, and address.</field>
-            <field name="category_id" ref="category_sales_crm"/>
+        <record id="tool_list_models" model="mcp.tool">
+            <field name="name">list_models</field>
+            <field name="display_name_label">List Models</field>
+            <field name="description">Discover installed Odoo models in the database. Use when the user asks: "what models exist", "which Odoo models are available", "show me all models", or before using search_read on an unfamiliar model. Supports regex filter on technical names.</field>
+            <field name="category_id" ref="category_read"/>
             <field name="tool_type">odoo</field>
-            <field name="odoo_model">res.partner</field>
-            <field name="odoo_method">search_read</field>
-            <field name="odoo_fields">['id', 'name', 'email', 'phone', 'country_id']</field>
+            <field name="odoo_model">ir.model</field>
+            <field name="odoo_method">list_models</field>
             <field name="is_readonly">True</field>
-            <field name="sudo_execute">True</field>
             <field name="requires_confirm">False</field>
             <field name="input_schema">{
   "type": "object",
   "properties": {
-    "name": {"type": "string", "description": "Partner name or company name to search for (partial match supported). Use this as the primary search term."},
-    "email": {"type": "string", "description": "Email address to filter by (optional). Useful when searching by known email."},
-    "phone": {"type": "string", "description": "Phone number to filter by (optional). Partial match supported."},
-    "limit": {"type": "integer", "description": "Maximum number of results to return. Default is 10. Use higher values (20-50) when user asks for 'all' or 'list all'."}
-  },
-  "required": ["name"]
+    "regex": {"type": "string", "description": "Regex filter for model name (e.g. \"^sale\\.\")"}
+  }
 }</field>
+            <field name="output_sample">[{"model": "sale.order", "name": "Sales Order"}]</field>
         </record>
 
-        <record id="tool_partner_create" model="mcp.tool">
-            <field name="name">partner_create</field>
-            <field name="display_name_label">Create Partner</field>
-            <field name="description">[SALES &amp; CRM] Use this tool when the user wants to add, create, register, or create a new customer, supplier, vendor, or contact in the system. Trigger phrases: "create customer", "add partner", "new client", "register contact", "add to database", "make a new [customer/supplier]". Do NOT use this tool to search for existing records (use partner_search) or to view details (use partner_details). Requires user confirmation before execution. Returns: ID of the newly created partner.</field>
-            <field name="category_id" ref="category_sales_crm"/>
+        <record id="tool_get_model_schema" model="mcp.tool">
+            <field name="name">get_model_schema</field>
+            <field name="display_name_label">Get Model Schema</field>
+            <field name="description">Retrieve the FIELD definitions of an Odoo model (field names, types, relations). Call this ONCE per model when you are not 100% certain of field names. After calling it, immediately proceed to search_read or execute_orm — do NOT call get_model_schema again on the same model. IMPORTANT: This tool shows FIELDS only, NOT Python methods. If you need to find what method to call on a model (e.g. action_confirm, action_quotation_send_email), use search_module_code to find the method name, then call it via execute_orm. Never use get_model_schema to look up methods — it will never show them.</field>
+            <field name="category_id" ref="category_read"/>
             <field name="tool_type">odoo</field>
-            <field name="odoo_model">res.partner</field>
-            <field name="odoo_method">create</field>
+            <field name="odoo_model">ir.model</field>
+            <field name="odoo_method">get_model_schema</field>
+            <field name="is_readonly">True</field>
+            <field name="requires_confirm">False</field>
+            <field name="input_schema">{
+  "type": "object",
+  "properties": {
+    "model": {"type": "string", "description": "Target Odoo model (e.g. \"res.partner\")"},
+    "fields": {"type": "array", "items": {"type": "string"}, "description": "Specific fields to inspect"}
+  },
+  "required": ["model"]
+}</field>
+            <field name="output_sample">{"name": {"type": "char", "string": "Name"}, "partner_id": {"type": "many2one", "relation": "res.partner"}}</field>
+        </record>
+
+        <record id="tool_search_read" model="mcp.tool">
+            <field name="name">search_read</field>
+            <field name="display_name_label">Search Records</field>
+            <field name="description">Find, list, filter, or count records in any Odoo model. ALWAYS call this tool when the user asks: "show me all", "find customers", "list invoices", "get orders", "how many records", "search for", "fetch", "retrieve". Never answer data questions from memory — always query with this tool first. IMPORTANT: Never guess field names. If you are not 100% certain which fields exist on the model, call get_model_schema first, then use the exact field names it returns.</field>
+            <field name="category_id" ref="category_read"/>
+            <field name="tool_type">odoo</field>
+            <field name="odoo_model">ir.model</field>
+            <field name="odoo_method">search_read</field>
+            <field name="is_readonly">True</field>
+            <field name="requires_confirm">False</field>
+            <field name="input_schema">{
+  "type": "object",
+  "properties": {
+    "model": {"type": "string", "description": "Technical model name (e.g. \"crm.lead\")"},
+    "domain": {"type": "array", "description": "Odoo domain array (e.g. [[\"state\", \"=\", \"draft\"]])"},
+    "fields": {"type": "array", "items": {"type": "string"}, "description": "Fields to return"},
+    "limit": {"type": "integer", "description": "Max records to fetch (default: 10, max: 100)", "default": 10},
+    "order": {"type": "string", "description": "Order by field (e.g. \"write_date desc\")"}
+  },
+  "required": ["model"]
+}</field>
+            <field name="output_sample">[{"id": 1, "name": "Acme Lead", "probability": 0.5}]</field>
+        </record>
+
+        <record id="tool_read_record" model="mcp.tool">
+            <field name="name">read_record</field>
+            <field name="display_name_label">Read Record Details</field>
+            <field name="description">Get full details of a single record by its database ID. Use when the user says: "show me record #X", "get details of ID", "open record", or after search_read returns an ID and the user wants full field details.</field>
+            <field name="category_id" ref="category_read"/>
+            <field name="tool_type">odoo</field>
+            <field name="odoo_model">ir.model</field>
+            <field name="odoo_method">read_record</field>
+            <field name="is_readonly">True</field>
+            <field name="requires_confirm">False</field>
+            <field name="input_schema">{
+  "type": "object",
+  "properties": {
+    "model": {"type": "string", "description": "Technical model name (e.g. \"res.partner\")"},
+    "res_id": {"type": "integer", "description": "Record primary database ID"},
+    "fields": {"type": "array", "items": {"type": "string"}, "description": "Specific fields to read"}
+  },
+  "required": ["model", "res_id"]
+}</field>
+            <field name="output_sample">{"id": 1, "name": "Acme Inc", "email": "info@acme.com"}</field>
+        </record>
+
+        <record id="tool_read_group" model="mcp.tool">
+            <field name="name">read_group</field>
+            <field name="display_name_label">Aggregate Records (Group By)</field>
+            <field name="description">Aggregate and group database records for statistics and reports. Use when the user asks: "total sales by month", "count orders per customer", "sum revenue by product", "how much in total", "group by", "breakdown of", "average", "statistics". Never calculate aggregates manually from raw records — use this tool. Call directly without schema lookup — you know the field names for standard Odoo models.</field>
+            <field name="category_id" ref="category_read"/>
+            <field name="tool_type">odoo</field>
+            <field name="odoo_model">ir.model</field>
+            <field name="odoo_method">read_group</field>
+            <field name="is_readonly">True</field>
+            <field name="requires_confirm">False</field>
+            <field name="input_schema">{
+  "type": "object",
+  "properties": {
+    "model": {"type": "string", "description": "Technical model name (e.g. \"sale.order\")"},
+    "domain": {"type": "array", "description": "Odoo domain array filter"},
+    "fields": {"type": "array", "items": {"type": "string"}, "description": "Aggregated fields (e.g. [\"price_total:sum\"])"},
+    "groupby": {"type": "array", "items": {"type": "string"}, "description": "Fields to group by (e.g. [\"date_order:month\"])"},
+    "limit": {"type": "integer", "description": "Max group records"},
+    "order": {"type": "string", "description": "Sorting parameters"}
+  },
+  "required": ["model", "fields", "groupby"]
+}</field>
+            <field name="output_sample">[{"date_order_count": 5, "price_total": 4500.0, "date_order:month": "May 2026"}]</field>
+        </record>
+
+        <!-- ──────────────────────────────────────────────────────────────── -->
+        <!-- WRITE DATABASE TOOLS                                             -->
+        <!-- ──────────────────────────────────────────────────────────────── -->
+
+        <record id="tool_create_record" model="mcp.tool">
+            <field name="name">create_record</field>
+            <field name="display_name_label">Create Record</field>
+            <field name="description">Create a new record in Odoo. Use when the user says: "create a", "add a new", "make a new", "register a", "insert a". Examples: create a customer, create a sale order, add a new product. You know the required fields for common models — call this directly without schema lookup.</field>
+            <field name="category_id" ref="category_write"/>
+            <field name="tool_type">odoo</field>
+            <field name="odoo_model">ir.model</field>
+            <field name="odoo_method">create_record</field>
             <field name="is_readonly">False</field>
             <field name="requires_confirm">True</field>
             <field name="input_schema">{
   "type": "object",
   "properties": {
-    "name": {"type": "string", "description": "Full name or company name of the partner (REQUIRED). This is the primary identifier."},
-    "email": {"type": "string", "description": "Email address for the partner. Highly recommended for customer communications."},
-    "phone": {"type": "string", "description": "Contact phone number with country code if possible."},
-    "website": {"type": "string", "description": "Company website URL (optional). Include http:// or https://."},
-    "country_id": {"type": "integer", "description": "Country ID for the partner. Find the country first using partner_search if needed."}
+    "model": {"type": "string", "description": "Technical model name (e.g. \"sale.order\")"},
+    "values": {"type": "object", "description": "Key-value dictionary mapping fields to create values"}
   },
-  "required": ["name"]
+  "required": ["model", "values"]
 }</field>
+            <field name="output_sample">{"id": 42}</field>
         </record>
 
-        <record id="tool_sale_order_search" model="mcp.tool">
-            <field name="name">sale_order_search</field>
-            <field name="display_name_label">Search Sales Orders</field>
-            <field name="description">[SALES &amp; CRM] Use this tool when the user wants to find, look up, or search for existing sales orders or quotes. Trigger phrases: "find order", "search sales", "show orders", "list quotes", "order status", "pending orders", "draft orders", "recent sales". Do NOT use this tool to create new orders (use sale_order_create) or to confirm an order (use sale_order_confirm). Do NOT use for invoices - use invoice_search instead. Returns: list of orders with ID, customer, amount, date, and state.</field>
-            <field name="category_id" ref="category_sales_crm"/>
+        <record id="tool_update_record" model="mcp.tool">
+            <field name="name">update_record</field>
+            <field name="display_name_label">Update Record(s)</field>
+            <field name="description">Update fields on one or more existing records. Use when the user says: "update", "change", "set the", "modify", "edit record", "rename". Always use search_read first to get the record IDs before updating.</field>
+            <field name="category_id" ref="category_write"/>
             <field name="tool_type">odoo</field>
-            <field name="odoo_model">sale.order</field>
-            <field name="odoo_method">search_read</field>
-            <field name="odoo_fields">['id', 'name', 'partner_id', 'state', 'amount_total', 'date_order']</field>
-            <field name="is_readonly">True</field>
-            <field name="requires_confirm">False</field>
-            <field name="input_schema">{
-  "type": "object",
-  "properties": {
-    "partner_name": {"type": "string", "description": "Customer name to filter orders by. Use exact customer name or company name as shown in partner records."},
-    "state": {"type": "string", "enum": ["draft", "sent", "sale", "done", "cancel"], "description": "Order status/filter. Options: 'draft' (not yet sent), 'sent' (quotation sent), 'sale' (confirmed order), 'done' (completed), 'cancel' (cancelled). Leave empty to see all states."},
-    "limit": {"type": "integer", "description": "Maximum number of results. Default is 10. Use 20-50 when user asks for 'all' or multiple orders."}
-  }
-}</field>
-        </record>
-
-        <record id="tool_sale_order_create" model="mcp.tool">
-            <field name="name">sale_order_create</field>
-            <field name="display_name_label">Create Sales Order</field>
-            <field name="description">[SALES &amp; CRM] Use this tool when the user wants to create, generate, make, or prepare a new sales order, quote, or sales quotation for a customer. Trigger phrases: "create order", "new order", "make a sale", "generate quote", "prepare quotation", "add to order". Do NOT use this to search orders (use sale_order_search) or to confirm orders (use sale_order_confirm). Requires user confirmation before execution. Returns: ID of the created order.</field>
-            <field name="category_id" ref="category_sales_crm"/>
-            <field name="tool_type">odoo</field>
-            <field name="odoo_model">sale.order</field>
-            <field name="odoo_method">create</field>
+            <field name="odoo_model">ir.model</field>
+            <field name="odoo_method">update_record</field>
             <field name="is_readonly">False</field>
             <field name="requires_confirm">True</field>
             <field name="input_schema">{
   "type": "object",
   "properties": {
-    "partner_id": {"type": "integer", "description": "Customer/Partner ID (REQUIRED). First find the customer using partner_search to get their ID."},
-    "order_line": {
-      "type": "array",
-      "description": "Order line items (REQUIRED). At least one product is needed.",
-      "items": {
-        "type": "object",
-        "properties": {
-          "product_id": {"type": "integer", "description": "Product ID (REQUIRED). Find product using product_search first."},
-          "product_uom_qty": {"type": "number", "description": "Quantity to order (REQUIRED). Default is 1."},
-          "price_unit": {"type": "number", "description": "Unit price (optional). Leave empty to use product's list price."}
-        }
-      }
-    }
+    "model": {"type": "string", "description": "Technical model name (e.g. \"res.partner\")"},
+    "res_ids": {"type": "array", "items": {"type": "integer"}, "description": "Target record database IDs"},
+    "values": {"type": "object", "description": "Key-value updates"}
   },
-  "required": ["partner_id", "order_line"]
+  "required": ["model", "res_ids", "values"]
 }</field>
+            <field name="output_sample">{"success": true}</field>
         </record>
 
-        <record id="tool_sale_order_confirm" model="mcp.tool">
-            <field name="name">sale_order_confirm</field>
-            <field name="display_name_label">Confirm Sales Order</field>
-            <field name="description">[SALES &amp; CRM] Use this tool when the user wants to confirm, validate, approve, or lock a draft sales order or quotation - turning it into a confirmed sale. Trigger phrases: "confirm order", "approve quote", "validate sale", "lock order", "confirm sale", "make order official". Do NOT use this to create orders (use sale_order_create) or search orders (use sale_order_search). Requires user confirmation. Returns: success confirmation with order ID.</field>
-            <field name="category_id" ref="category_sales_crm"/>
+        <record id="tool_delete_record" model="mcp.tool">
+            <field name="name">delete_record</field>
+            <field name="display_name_label">Delete Record(s)</field>
+            <field name="description">Permanently delete records from Odoo. Use when the user says: "delete", "remove", "unlink", "erase". Always confirm record IDs with search_read before deleting. This action is irreversible.</field>
+            <field name="category_id" ref="category_write"/>
             <field name="tool_type">odoo</field>
-            <field name="odoo_model">sale.order</field>
-            <field name="odoo_method">action_confirm</field>
+            <field name="odoo_model">ir.model</field>
+            <field name="odoo_method">delete_record</field>
             <field name="is_readonly">False</field>
             <field name="requires_confirm">True</field>
             <field name="input_schema">{
   "type": "object",
   "properties": {
-    "id": {"type": "integer", "description": "Sales order ID to confirm (REQUIRED). First find the order using sale_order_search. Only works on orders in 'draft' or 'sent' state."}
+    "model": {"type": "string", "description": "Technical model name"},
+    "res_ids": {"type": "array", "items": {"type": "integer"}, "description": "Database IDs to unlink"}
   },
-  "required": ["id"]
+  "required": ["model", "res_ids"]
 }</field>
+            <field name="output_sample">{"success": true}</field>
         </record>
 
-        <record id="tool_crm_lead_search" model="mcp.tool">
-            <field name="name">crm_lead_search</field>
-            <field name="display_name_label">Search CRM Leads</field>
-            <field name="description">[SALES &amp; CRM] Use this tool when the user wants to find, search, look up, or list sales leads, opportunities, or prospects in the CRM pipeline. Trigger phrases: "find lead", "search opportunities", "show prospects", "pipeline", "lead status", "sales pipeline", "new leads", "pending opportunities". Do NOT use this to create leads (use crm_lead_create) or to manage confirmed customers (use partner_search). Returns: list of leads with name, company, stage, probability, and expected revenue.</field>
-            <field name="category_id" ref="category_sales_crm"/>
+        <record id="tool_execute_method" model="mcp.tool">
+            <field name="name">execute_method</field>
+            <field name="display_name_label">Execute Model Method</field>
+            <field name="description">Run an Odoo workflow action or business method on records. Use when the user says: "confirm the order", "validate the invoice", "approve", "cancel", "post", "mark as done", "send", "reset to draft". Trigger: any workflow state change that isn't just a field write.</field>
+            <field name="category_id" ref="category_write"/>
             <field name="tool_type">odoo</field>
-            <field name="odoo_model">crm.lead</field>
-            <field name="odoo_method">search_read</field>
-            <field name="odoo_fields">['id', 'name', 'partner_id', 'stage_id', 'probability', 'expected_revenue', 'user_id']</field>
-            <field name="is_readonly">True</field>
-            <field name="requires_confirm">False</field>
-            <field name="input_schema">{
-  "type": "object",
-  "properties": {
-    "name": {"type": "string", "description": "Lead name or company name to search for. Partial match supported."},
-    "stage_id": {"type": "integer", "description": "Pipeline stage ID to filter by. Common stages: New=1, Qualified=2, Proposition=3, Won=4, Lost=5."},
-    "limit": {"type": "integer", "description": "Maximum number of results. Default is 10. Use higher for pipeline overview."}
-  }
-}</field>
-        </record>
-
-        <record id="tool_crm_lead_create" model="mcp.tool">
-            <field name="name">crm_lead_create</field>
-            <field name="display_name_label">Create CRM Lead</field>
-            <field name="description">[SALES &amp; CRM] Use this tool when the user wants to create, add, register, or generate a new sales lead, opportunity, or prospect in the CRM system. Trigger phrases: "create lead", "new opportunity", "add prospect", "register lead", "new sales lead", "create opportunity". Do NOT use this to search leads (use crm_lead_search) or to convert to customer (use partner_create). Requires user confirmation. Returns: ID of the created lead.</field>
-            <field name="category_id" ref="category_sales_crm"/>
-            <field name="tool_type">odoo</field>
-            <field name="odoo_model">crm.lead</field>
-            <field name="odoo_method">create</field>
+            <field name="odoo_model">ir.model</field>
+            <field name="odoo_method">execute_method</field>
             <field name="is_readonly">False</field>
             <field name="requires_confirm">True</field>
             <field name="input_schema">{
   "type": "object",
   "properties": {
-    "name": {"type": "string", "description": "Lead name or company name (REQUIRED). This is how the lead will be identified."},
-    "partner_name": {"type": "string", "description": "Company or contact name for the lead (optional)."},
-    "email_from": {"type": "string", "description": "Email address of the contact (optional but recommended)."},
-    "phone": {"type": "string", "description": "Phone number of the contact (optional)."},
-    "user_id": {"type": "integer", "description": "Salesperson ID to assign the lead to. Find using employee_search if needed."},
-    "expected_revenue": {"type": "number", "description": "Estimated deal value or revenue amount (optional)."}
+    "model": {"type": "string", "description": "Technical model name"},
+    "res_ids": {"type": "array", "items": {"type": "integer"}, "description": "Target record database IDs"},
+    "method": {"type": "string", "description": "Method name to call (e.g. \"action_confirm\")"},
+    "args": {"type": "array", "description": "Positional method arguments"},
+    "kwargs": {"type": "object", "description": "Keyword method arguments"}
   },
-  "required": ["name"]
+  "required": ["model", "res_ids", "method"]
 }</field>
+            <field name="output_sample">{"result": null}</field>
         </record>
 
         <!-- ──────────────────────────────────────────────────────────────── -->
-        <!-- FINANCE &amp; ACCOUNTING TOOLS (4 tools)                             -->
+        <!-- CODE INSPECTION TOOLS                                            -->
         <!-- ──────────────────────────────────────────────────────────────── -->
 
-        <record id="tool_invoice_search" model="mcp.tool">
-            <field name="name">invoice_search</field>
-            <field name="display_name_label">Search Invoices</field>
-            <field name="description">[FINANCE] Use this tool when the user wants to find, search, look up, or list invoices, bills, or payment requests. Trigger phrases: "find invoice", "search invoice", "show invoices", "list bills", "invoice status", "pending payment", "outstanding invoices", "paid invoices", "unpaid invoices". Do NOT use this for sales orders (use sale_order_search) or to create invoices (use invoice_create - if available). Returns: list of invoices with ID, number, customer, amount, date, and state.</field>
-            <field name="category_id" ref="category_finance"/>
+        <record id="tool_code_search" model="mcp.tool">
+            <field name="name">code_search</field>
+            <field name="display_name_label">Search Addons Code</field>
+            <field name="description">Search the module source code for classes, methods, or patterns. Use when the user asks: "where is X defined", "find the class", "search codebase for", "which file contains", "show me the implementation of". Returns file path, line number, and matching content.</field>
+            <field name="category_id" ref="category_code"/>
             <field name="tool_type">odoo</field>
-            <field name="odoo_model">account.move</field>
-            <field name="odoo_method">search_read</field>
-            <field name="odoo_fields">['id', 'name', 'partner_id', 'state', 'amount_total', 'invoice_date']</field>
+            <field name="odoo_model">ir.model</field>
+            <field name="odoo_method">code_search</field>
             <field name="is_readonly">True</field>
             <field name="requires_confirm">False</field>
             <field name="input_schema">{
   "type": "object",
   "properties": {
-    "partner_name": {"type": "string", "description": "Customer or vendor name to filter invoices by. Use exact name as in partner records."},
-    "state": {"type": "string", "enum": ["draft", "posted", "paid", "cancel"], "description": "Invoice status. Options: 'draft' (not yet validated), 'posted' (validated, awaiting payment), 'paid' (payment received), 'cancel' (cancelled)."},
-    "limit": {"type": "integer", "description": "Maximum number of results. Default is 10. Use higher for accounts receivable/payable reports."}
-  }
-}</field>
-        </record>
-
-        <record id="tool_invoice_details" model="mcp.tool">
-            <field name="name">invoice_details</field>
-            <field name="display_name_label">Get Invoice Details</field>
-            <field name="description">[FINANCE] Use this tool when the user wants to view, see, get, or check the full details of a specific invoice including line items, taxes, and payment information. Trigger phrases: "invoice details", "show invoice", "invoice lines", "invoice items", "get invoice", "view invoice [ID]", "full invoice". Do NOT use this to search for invoices (use invoice_search). Requires knowing the specific invoice ID - find it first using invoice_search. Returns: full invoice details with line items, taxes, and payment info.</field>
-            <field name="category_id" ref="category_finance"/>
-            <field name="tool_type">odoo</field>
-            <field name="odoo_model">account.move</field>
-            <field name="odoo_method">search_read</field>
-            <field name="odoo_fields">['id', 'name', 'partner_id', 'state', 'amount_total', 'invoice_date', 'invoice_line_ids']</field>
-            <field name="is_readonly">True</field>
-            <field name="requires_confirm">False</field>
-            <field name="input_schema">{
-  "type": "object",
-  "properties": {
-    "id": {"type": "integer", "description": "Invoice ID to retrieve (REQUIRED). Find the ID first using invoice_search if you don't know it."}
+    "query": {"type": "string", "description": "Pattern regex to search for"},
+    "path_filter": {"type": "string", "description": "Glob pattern to filter paths (e.g., \"*.py\")"}
   },
-  "required": ["id"]
+  "required": ["query"]
 }</field>
+            <field name="output_sample">[{"file": "models/res_partner.py", "line": 42, "content": "class ResPartner(models.Model):"}]</field>
         </record>
 
-        <record id="tool_product_search" model="mcp.tool">
-            <field name="name">product_search</field>
-            <field name="display_name_label">Search Products</field>
-            <field name="description">[INVENTORY &amp; OPERATIONS] Use this tool when the user wants to find, search, look up, or list products, items, or goods in the system. Trigger phrases: "find product", "search item", "show products", "product list", "catalog", "inventory", "SKU", "what products", "available items", "pricing". Do NOT use this to check stock levels (use stock_quantity_search) or to create products. Returns: list of products with ID, name, SKU, price, and available quantity.</field>
-            <field name="category_id" ref="category_operations"/>
+        <record id="tool_code_read" model="mcp.tool">
+            <field name="name">code_read</field>
+            <field name="display_name_label">Read Code File</field>
+            <field name="description">Read the contents of a source file from the module directory. Use when the user says: "show me the file", "read the code in", "open the file", "what is in", or after code_search returns a file path and you need to see the full content.</field>
+            <field name="category_id" ref="category_code"/>
             <field name="tool_type">odoo</field>
-            <field name="odoo_model">product.product</field>
-            <field name="odoo_method">search_read</field>
-            <field name="odoo_fields">['id', 'name', 'default_code', 'list_price', 'qty_available', 'categ_id']</field>
+            <field name="odoo_model">ir.model</field>
+            <field name="odoo_method">code_read</field>
             <field name="is_readonly">True</field>
             <field name="requires_confirm">False</field>
             <field name="input_schema">{
   "type": "object",
   "properties": {
-    "name": {"type": "string", "description": "Product name to search for (partial match supported). Use as primary search term."},
-    "default_code": {"type": "string", "description": "Product SKU or internal reference code to search by."},
-    "limit": {"type": "integer", "description": "Maximum number of results. Default is 10. Use higher for full catalog."}
-  }
+    "filepath": {"type": "string", "description": "Relative path to file in project"},
+    "start_line": {"type": "integer", "description": "Start line (1-indexed)", "default": 1},
+    "end_line": {"type": "integer", "description": "End line (1-indexed)", "default": 100}
+  },
+  "required": ["filepath"]
 }</field>
-        </record>
-
-        <record id="tool_stock_quantity" model="mcp.tool">
-            <field name="name">stock_quantity_search</field>
-            <field name="display_name_label">Search Stock Quantities</field>
-            <field name="description">[INVENTORY &amp; OPERATIONS] Use this tool when the user wants to check, view, see, get, or find inventory levels, stock quantities, available items, or warehouse quantities. Trigger phrases: "check stock", "inventory level", "available quantity", "in stock", "stock level", "how many", "warehouse stock", "product availability", "on hand". Do NOT use this to search for products (use product_search). Returns: product, warehouse location, available quantity, and reserved quantity.</field>
-            <field name="category_id" ref="category_operations"/>
-            <field name="tool_type">odoo</field>
-            <field name="odoo_model">stock.quant</field>
-            <field name="odoo_method">search_read</field>
-            <field name="odoo_fields">['id', 'product_id', 'location_id', 'quantity', 'reserved_quantity']</field>
-            <field name="is_readonly">True</field>
-            <field name="requires_confirm">False</field>
-            <field name="input_schema">{
-  "type": "object",
-  "properties": {
-    "product_id": {"type": "integer", "description": "Product ID to check stock for. Find ID using product_search first."},
-    "location_id": {"type": "integer", "description": "Warehouse/location ID to check (optional). Default shows all locations."},
-    "limit": {"type": "integer", "description": "Maximum number of results. Default is 20."}
-  }
-}</field>
+            <field name="output_sample">"class Partner(models.Model):\n    _inherit = 'res.partner'"</field>
         </record>
 
         <!-- ──────────────────────────────────────────────────────────────── -->
-        <!-- OPERATIONS &amp; HR TOOLS (3 tools)                                  -->
+        <!-- ADVANCED / SANDBOX TOOLS                                         -->
         <!-- ──────────────────────────────────────────────────────────────── -->
 
-        <record id="tool_calendar_event_create" model="mcp.tool">
-            <field name="name">calendar_event_create</field>
-            <field name="display_name_label">Create Calendar Event</field>
-            <field name="description">[OPERATIONS &amp; HR] Use this tool when the user wants to create, schedule, add, or set up a meeting, event, appointment, or calendar entry. Trigger phrases: "create meeting", "schedule meeting", "add event", "book appointment", "set up call", "calendar invite", "schedule demo", "book time". Do NOT use this for sending emails or messages. Requires user confirmation. Returns: ID of the created event.</field>
-            <field name="category_id" ref="category_operations"/>
+        <record id="tool_execute_orm" model="mcp.tool">
+            <field name="name">execute_orm</field>
+            <field name="display_name_label">Execute Backend Script (safe_eval)</field>
+            <field name="description">Execute a Python script in Odoo's safe_eval sandbox with full ORM access. Use for complex multi-step operations that no single tool covers: "run this script", "compute and update", "bulk operation", "custom logic". Has access to env, user, Command, json, datetime, requests.</field>
+            <field name="category_id" ref="category_advanced"/>
             <field name="tool_type">odoo</field>
-            <field name="odoo_model">calendar.event</field>
-            <field name="odoo_method">create</field>
+            <field name="odoo_model">ir.model</field>
+            <field name="odoo_method">execute_orm</field>
             <field name="is_readonly">False</field>
             <field name="requires_confirm">True</field>
             <field name="input_schema">{
   "type": "object",
   "properties": {
-    "name": {"type": "string", "description": "Event title or meeting name (REQUIRED). Be descriptive (e.g., 'Customer Call - Acme Corp', 'Team Standup')."},
-    "start": {"type": "string", "description": "Start date and time in ISO 8601 format (REQUIRED). Example: '2025-01-15 09:00:00'"},
-    "stop": {"type": "string", "description": "End date and time in ISO 8601 format (REQUIRED). Must be after start time. Example: '2025-01-15 10:00:00'"},
-    "partner_ids": {"type": "array", "description": "Attendee IDs (optional). List of partner/contact IDs to invite. Find using partner_search first.", "items": {"type": "integer"}}
+    "code": {"type": "string", "description": "Python block to execute (expose env, user, Command)"}
   },
-  "required": ["name", "start", "stop"]
+  "required": ["code"]
 }</field>
+            <field name="output_sample">{"result": 42}</field>
         </record>
 
-        <record id="tool_helpdesk_ticket_create" model="mcp.tool">
-            <field name="name">helpdesk_ticket_create</field>
-            <field name="display_name_label">Create Helpdesk Ticket</field>
-            <field name="description">[HR &amp; OPERATIONS] Use this tool when the user wants to create, open, log, or register a support ticket, helpdesk issue, customer support request, or service ticket. Trigger phrases: "create ticket", "open support ticket", "log issue", "raise support request", "report problem", "helpdesk", "support case", "report bug". Do NOT use this for general tasks (use calendar_event_create) or to search tickets (use helpdesk_ticket_search if available). Requires user confirmation. Returns: ID of the created ticket.</field>
-            <field name="category_id" ref="category_operations"/>
+        <record id="tool_create_echart" model="mcp.tool">
+            <field name="name">create_echart</field>
+            <field name="display_name_label">Create EChart Dashboard Widget</field>
+            <field name="description">Create and save an Apache ECharts visualization. Use when user asks: "create a chart", "visualize", "plot", "show me a graph". SINGLE tool call — do NOT call read_group separately first. Write data_code Python using ECharts dataset format: query ORM inside data_code, build source as list-of-lists (first row = headers), return complete options dict. BAR/LINE: result=env['sale.order'].read_group(domain=[['date_order','&gt;=','2026-06-01'],['state','not in',['cancel']]],fields=['amount_total:sum'],groupby=['date_order:day']); source=[['Date','Sales']]+[[str(r.get('date_order:day','')),r.get('amount_total',0)] for r in result]; return {'title':{'text':'June Sales'},'dataset':{'source':source},'xAxis':{'type':'category'},'yAxis':{'type':'value'},'series':[{'type':'bar','name':'Sales'}]}. PIE: result=env['sale.order'].read_group(domain=[],fields=['amount_total:sum'],groupby=['partner_id']); source=[['Customer','Amount']]+[[r['partner_id'][1],r.get('amount_total',0)] for r in result if r.get('partner_id')]; return {'title':{'text':'By Customer'},'dataset':{'source':source},'series':[{'type':'pie','radius':'60%','encode':{'itemName':'Customer','value':'Amount'}}]}. RULES: always use dataset.source, never xAxis.data or series.data, data_code must end with return dict.</field>
+            <field name="category_id" ref="category_advanced"/>
             <field name="tool_type">odoo</field>
-            <field name="odoo_model">helpdesk.ticket</field>
-            <field name="odoo_method">create</field>
+            <field name="odoo_model">ir.model</field>
+            <field name="odoo_method">create_echart</field>
             <field name="is_readonly">False</field>
             <field name="requires_confirm">True</field>
             <field name="input_schema">{
   "type": "object",
   "properties": {
-    "name": {"type": "string", "description": "Ticket subject/title (REQUIRED). Be brief but descriptive (e.g., 'Cannot access login page', 'Invoice discrepancy for INV-001')."},
-    "description": {"type": "string", "description": "Detailed description of the issue or request (REQUIRED). Include steps to reproduce if applicable."},
-    "partner_id": {"type": "integer", "description": "Customer/contact ID (optional). Find using partner_search first."},
-    "priority": {"type": "string", "enum": ["0", "1", "2", "3"], "description": "Priority level. Options: '0' (Low), '1' (Medium), '2' (High), '3' (Urgent). Default is '1'."}
+    "name": {"type": "string", "description": "Chart title shown in MCP Charts app"},
+    "data_code": {"type": "string", "description": "Python script with Odoo ORM access (env, user available). Must end with: return {complete ECharts options dict with data embedded}. Use env['model'].read_group() or search_read() to fetch data inside this script."}
   },
-  "required": ["name", "description"]
+  "required": ["name", "data_code"]
 }</field>
+            <field name="output_sample">{"id": 1, "name": "June Sales"}</field>
         </record>
 
-        <record id="tool_employee_search" model="mcp.tool">
-            <field name="name">employee_search</field>
-            <field name="display_name_label">Search Employees</field>
-            <field name="description">[HR &amp; OPERATIONS] Use this tool when the user wants to find, search, look up, or list employees, staff members, or team members in the company. Trigger phrases: "find employee", "search staff", "show employees", "who is", "staff directory", "team list", "employee contact", "HR lookup", "colleague". Do NOT use this to search customers (use partner_search) or to create employees (use hr_employee_create if available). Returns: list of employees with name, email, department, job title, and phone.</field>
-            <field name="category_id" ref="category_operations"/>
+        <record id="tool_ai_agent_query" model="mcp.tool">
+            <field name="name">ai_agent_query</field>
+            <field name="display_name_label">Delegate Query to AI Agent</field>
+            <field name="description">Delegate a task to a different AI agent configured in the system. Use when the user says: "ask the other agent", "use the specialist agent", "delegate to", or when the current agent lacks tools the target agent has. Max recursion depth: 3.</field>
+            <field name="category_id" ref="category_advanced"/>
             <field name="tool_type">odoo</field>
-            <field name="odoo_model">hr.employee</field>
-            <field name="odoo_method">search_read</field>
-            <field name="odoo_fields">['id', 'name', 'work_email', 'department_id', 'job_title', 'work_phone']</field>
+            <field name="odoo_model">ir.model</field>
+            <field name="odoo_method">ai_agent_query</field>
             <field name="is_readonly">True</field>
-            <field name="sudo_execute">True</field>
             <field name="requires_confirm">False</field>
             <field name="input_schema">{
   "type": "object",
   "properties": {
-    "name": {"type": "string", "description": "Employee name to search for (partial match supported). Use as primary search term."},
-    "department_id": {"type": "integer", "description": "Department ID to filter by. Common departments: Sales, Engineering, HR, Finance, Operations."},
-    "limit": {"type": "integer", "description": "Maximum number of results. Default is 10. Use higher for full staff directory."}
-  }
+    "agent_id": {"type": "integer", "description": "Relational ID of target mcp.agent"},
+    "prompt": {"type": "string", "description": "Prompt instructions"}
+  },
+  "required": ["agent_id", "prompt"]
 }</field>
+            <field name="output_sample">"Response from delegated Agent..."</field>
         </record>
 
     </data>

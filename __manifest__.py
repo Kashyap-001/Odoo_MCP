@@ -35,8 +35,8 @@ Requirements:
     'data': [
         'security/mcp_security.xml',
         'security/ir.model.access.csv',
+        'security/mcp_record_rules.xml',
         'data/default_tools.xml',
-        'views/menu.xml',
         'views/mcp_agent_views.xml',
         'views/mcp_tool_views.xml',
         'views/mcp_tool_category_views.xml',
@@ -51,10 +51,14 @@ Requirements:
         'views/mcp_cost_entry_views.xml',
         'views/mcp_external_server_views.xml',
         'views/mcp_issue_views.xml',
+        'views/mcp_echart_views.xml',
+        'views/menu.xml',
     ],
     'assets': {
         'web.assets_backend': [
             'mcp_gateway/static/src/css/mcp_chat.css',
+            'mcp_gateway/static/src/js/mcp_chat_widget.js',
+            'mcp_gateway/static/src/xml/mcp_chat_widget.xml',
         ],
     },
     'installable': True,

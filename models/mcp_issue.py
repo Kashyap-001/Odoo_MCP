@@ -73,7 +73,6 @@ class Issue(models.Model):
         string=_('State'),
         required=True,
         default='needs_triage',
-        tracking=True,
         help=_('Current triage state'),
     )
     priority = fields.Integer(
@@ -123,11 +122,6 @@ class Issue(models.Model):
         string=_('Triage Notes'),
         help=_('Notes from triage process'),
     )
-
-    _sql_constraints = [
-        ('name_not_empty', 'CHECK(name IS NOT NULL AND name != \'\')',
-         _('Title is required.')),
-    ]
 
     def action_mark_needs_triage(self):
         self.write({'state': 'needs_triage'})

@@ -28,7 +28,7 @@
                     <!-- Session details -->
                     <group>
                         <group>
-                            <field name="name" />
+                            <field name="name" readonly="1" force_save="1" />
                             <field name="agent_id" />
                             <field name="user_id" />
                         </group>
@@ -65,7 +65,7 @@
                 <filter name="done_sessions" string="Completed" domain="[('state', '=', 'done')]" />
                 <filter name="error_sessions" string="Errors" domain="[('state', '=', 'error')]" />
                 <separator />
-                <filter name="today_sessions" string="Today" domain="[('create_date', '&gt;=', datetime.datetime.combine(datetime.date.today(), datetime.time(0, 0, 0)))]" />
+                <filter name="today_sessions" string="Today" domain="[('create_date', '&gt;=', context_today().strftime('%Y-%m-%d 00:00:00')), ('create_date', '&lt;=', context_today().strftime('%Y-%m-%d 23:59:59'))]" />
                 <separator />
                 <group expand="0" string="Group By">
                     <filter name="group_agent" string="Agent" domain="[]" context="{'group_by': 'agent_id'}" />

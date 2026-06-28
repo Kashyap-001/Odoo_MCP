@@ -233,6 +233,17 @@ class Agent(models.Model):
         store=True,
         help=_('Timestamp of most recent session'),
     )
+    total_tokens = fields.Integer(
+        string=_('Total Tokens'),
+        compute='_compute_totals',
+        store=True,
+    )
+    total_cost_usd = fields.Float(
+        string=_('Total Cost (USD)'),
+        compute='_compute_totals',
+        store=True,
+        digits=(10, 6),
+    )
     effective_tool_ids = fields.Many2many(
         comodel_name='mcp.tool',
         compute='_compute_effective_tools',
@@ -548,24 +559,30 @@ class Agent(models.Model):
             - If Fernet key is lost, all stored API keys become unrecoverable
         """
         if not self.api_key:
-            _logger.warning('No API key set for agent %s', self.id)
+            _logger.warning('No API key set for agent %s', getattr(self, 'id', 'New'))
             return ''
+
+        # If it doesn't start with the Fernet magic string, it's likely a plaintext
+        # key from an onchange event in the UI before it has been saved/encrypted.
+        if not self.api_key.startswith('gAAAAAB'):
+            _logger.info('API key does not appear to be encrypted. Assuming plaintext (e.g. from onchange).')
+            return self.api_key
 
         try:
             key = self._get_fernet_key()
             cipher_suite = Fernet(key)
             plaintext = cipher_suite.decrypt(self.api_key.encode())
             decrypted = plaintext.decode()
-            _logger.info('API key decrypted successfully for agent %s, key length: %d', self.id, len(decrypted))
+            _logger.info('API key decrypted successfully for agent %s', getattr(self, 'id', 'New'))
             return decrypted
         except InvalidToken:
             _logger.error('API key decryption failed: invalid token or corrupted key')
-            raise UserError(
+            raise exceptions.UserError(
                 _('Failed to decrypt API key. Key may be corrupted or Fernet key lost.')
             )
         except Exception as e:
             _logger.error('API key decryption failed: %s', str(e))
-            raise UserError(_('Failed to decrypt API key: %s') % str(e))
+            raise exceptions.UserError(_('Failed to decrypt API key: %s') % str(e))
 
     def _get_provider_instance(self):
         """
@@ -604,6 +621,14 @@ class Agent(models.Model):
             raise UserError(_('Unknown provider: %s') % self.provider)
 
         return provider_map[self.provider](self.env)
+
+    @api.depends('session_ids.input_tokens', 'session_ids.output_tokens', 'session_ids.estimated_cost_usd')
+    def _compute_totals(self):
+        for agent in self:
+            agent.total_tokens = sum(
+                (s.input_tokens or 0) + (s.output_tokens or 0) for s in agent.session_ids
+            )
+            agent.total_cost_usd = sum(s.estimated_cost_usd or 0.0 for s in agent.session_ids)
 
     @api.depends('session_ids')
     def _compute_session_count(self):
