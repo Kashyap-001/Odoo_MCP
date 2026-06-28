@@ -19,6 +19,11 @@ HANDOFF.md
 *.key
 *.pem
 
+# Local AI config (machine-specific, not for repo)
+.claude/
+.claudecoderc
+.agy/
+
 # Editor
 .vscode/
 .idea/
