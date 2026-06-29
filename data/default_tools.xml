@@ -287,7 +287,7 @@
         <record id="tool_execute_orm" model="mcp.tool">
             <field name="name">execute_orm</field>
             <field name="display_name_label">Execute Backend Script (safe_eval)</field>
-            <field name="description">Execute a Python script in Odoo's safe_eval sandbox with full ORM access. Use for complex multi-step operations that no single tool covers: "run this script", "compute and update", "bulk operation", "custom logic". Has access to env, user, Command, json, datetime. To pass language/timezone context use .with_context(lang='fr_FR') inside the code. The last expression is auto-returned.</field>
+            <field name="description">Execute a Python script in Odoo's safe_eval sandbox with full ORM access. Use for complex multi-step operations that no single tool covers. NEVER write "import" or "from" statements — all modules are pre-loaded: base64, io, BytesIO, StringIO, xlrd, openpyxl, re, json, datetime, date, timedelta, math, itertools, defaultdict, Counter, print. Do NOT use python "with" statements (they are forbidden by Odoo safe_eval; write explicit assignments and close manually instead). IMPORTANT: Use "return" to expose results to the AI — print() output goes to server logs only and will NOT be visible in the response. To read a spreadsheet attachment use the built-in helper: read_excel(attachment_id) → list of row lists (handles .xls, .xlsx, AND .ods automatically). Note: attachment.datas is base64-encoded; attachment.raw is raw bytes — read_excel handles the decode internally. Valid ir.attachment fields: id, name, mimetype, file_size, datas, raw, url, res_model, res_id (datas_fname was removed in Odoo 13, do not use it).</field>
             <field name="category_id" ref="category_advanced"/>
             <field name="tool_type">odoo</field>
             <field name="odoo_model">ir.model</field>
@@ -297,7 +297,7 @@
             <field name="input_schema">{
   "type": "object",
   "properties": {
-    "code": {"type": "string", "description": "Python block to execute (expose env, user, Command)"}
+    "code": {"type": "string", "description": "Python block to execute. Pre-loaded: env, user, Command, base64, io, BytesIO, StringIO, xlrd, openpyxl, json, re, math, datetime, date, timedelta, defaultdict, Counter, print, read_excel(attachment_id). Never write import statements. Use return (not print) to expose data back to the AI."}
   },
   "required": ["code"]
 }</field>

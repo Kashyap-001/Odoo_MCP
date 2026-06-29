@@ -31,6 +31,152 @@ from odoo.exceptions import UserError
 _logger = logging.getLogger(__name__)
 
 
+PREMADE_AVATARS = {
+    'generic': b64encode(b'''<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+  <defs>
+    <linearGradient id="grad_gen" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#714B67;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#4e3447;stop-opacity:1" />
+    </linearGradient>
+  </defs>
+  <rect width="100" height="100" rx="20" fill="url(#grad_gen)"/>
+  <rect x="28" y="28" width="44" height="44" rx="8" fill="none" stroke="#FFFFFF" stroke-width="5"/>
+  <circle cx="42" cy="45" r="4" fill="#FFFFFF"/>
+  <circle cx="58" cy="45" r="4" fill="#FFFFFF"/>
+  <rect x="44" y="58" width="12" height="4" rx="1" fill="#FFFFFF"/>
+  <rect x="47" y="16" width="6" height="12" fill="#FFFFFF"/>
+  <circle cx="50" cy="16" r="4" fill="#FFFFFF"/>
+</svg>'''),
+    'sales': b64encode(b'''<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+  <defs>
+    <linearGradient id="grad_sales" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#ea00d9;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#711c91;stop-opacity:1" />
+    </linearGradient>
+  </defs>
+  <rect width="100" height="100" rx="20" fill="url(#grad_sales)"/>
+  <path d="M30,70 L48,45 L62,55 L74,30" stroke="#FFFFFF" stroke-width="6" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="74" cy="30" r="4" fill="#FFFFFF"/>
+</svg>'''),
+    'accounting': b64encode(b'''<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+  <defs>
+    <linearGradient id="grad_acc" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#00F260;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#0575E6;stop-opacity:1" />
+    </linearGradient>
+  </defs>
+  <rect width="100" height="100" rx="20" fill="url(#grad_acc)"/>
+  <rect x="25" y="20" width="50" height="60" rx="5" fill="none" stroke="#FFFFFF" stroke-width="5"/>
+  <line x1="35" y1="35" x2="65" y2="35" stroke="#FFFFFF" stroke-width="5" stroke-linecap="round"/>
+  <line x1="35" y1="50" x2="65" y2="50" stroke="#FFFFFF" stroke-width="5" stroke-linecap="round"/>
+  <line x1="35" y1="65" x2="55" y2="65" stroke="#FFFFFF" stroke-width="5" stroke-linecap="round"/>
+</svg>'''),
+    'inventory': b64encode(b'''<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+  <defs>
+    <linearGradient id="grad_inv" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#f857a6;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#ff5858;stop-opacity:1" />
+    </linearGradient>
+  </defs>
+  <rect width="100" height="100" rx="20" fill="url(#grad_inv)"/>
+  <path d="M50,20 L78,34 L78,66 L50,80 L22,66 L22,34 Z" fill="none" stroke="#FFFFFF" stroke-width="5" stroke-linejoin="round"/>
+  <path d="M50,20 L50,80 M22,34 L50,48 L78,34" stroke="#FFFFFF" stroke-width="4" fill="none"/>
+</svg>'''),
+    'developer': b64encode(b'''<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+  <defs>
+    <linearGradient id="grad_dev" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#232526;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#414345;stop-opacity:1" />
+    </linearGradient>
+  </defs>
+  <rect width="100" height="100" rx="20" fill="url(#grad_dev)"/>
+  <path d="M35,35 L20,50 L35,65" stroke="#FFFFFF" stroke-width="6" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M65,35 L80,50 L65,65" stroke="#FFFFFF" stroke-width="6" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+  <line x1="55" y1="30" x2="45" y2="70" stroke="#FFFFFF" stroke-width="6" stroke-linecap="round"/>
+</svg>'''),
+    'support': b64encode(b'''<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+  <defs>
+    <linearGradient id="grad_sup" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#e65c00;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#F9D423;stop-opacity:1" />
+    </linearGradient>
+  </defs>
+  <rect width="100" height="100" rx="20" fill="url(#grad_sup)"/>
+  <circle cx="50" cy="50" r="30" fill="none" stroke="#FFFFFF" stroke-width="5"/>
+  <path d="M32,55 C32,35 68,35 68,55" stroke="#FFFFFF" stroke-width="5" fill="none" stroke-linecap="round"/>
+  <rect x="25" y="50" width="8" height="12" rx="2" fill="#FFFFFF"/>
+  <rect x="67" y="50" width="8" height="12" rx="2" fill="#FFFFFF"/>
+</svg>'''),
+    'brain': b64encode(b'''<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+  <defs>
+    <linearGradient id="grad_brain" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#8E2DE2;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#4A00E0;stop-opacity:1" />
+    </linearGradient>
+  </defs>
+  <rect width="100" height="100" rx="20" fill="url(#grad_brain)"/>
+  <path d="M48,30 C35,30 30,40 30,52 C30,64 38,72 48,72 C48,72 48,67 48,62 M52,30 C65,30 70,40 70,52 C70,64 62,72 52,72 C52,72 52,67 52,62" fill="none" stroke="#FFFFFF" stroke-width="4" stroke-linecap="round"/>
+  <circle cx="48" cy="40" r="3" fill="#FFFFFF"/>
+  <circle cx="52" cy="40" r="3" fill="#FFFFFF"/>
+  <circle cx="38" cy="52" r="3" fill="#FFFFFF"/>
+  <circle cx="62" cy="52" r="3" fill="#FFFFFF"/>
+  <circle cx="48" cy="64" r="3" fill="#FFFFFF"/>
+  <circle cx="52" cy="64" r="3" fill="#FFFFFF"/>
+  <path d="M48,40 L38,52 L48,64 M52,40 L62,52 L52,64" fill="none" stroke="#FFFFFF" stroke-width="2" opacity="0.6"/>
+</svg>'''),
+    'rocket': b64encode(b'''<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+  <defs>
+    <linearGradient id="grad_rocket" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#FF416C;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#FF4B2B;stop-opacity:1" />
+    </linearGradient>
+  </defs>
+  <rect width="100" height="100" rx="20" fill="url(#grad_rocket)"/>
+  <path d="M50,22 C56,35 64,45 64,62 L36,62 C36,45 44,35 50,22 Z" fill="#FFFFFF"/>
+  <circle cx="50" cy="45" r="4" fill="#FF416C"/>
+  <path d="M36,52 L24,66 L36,62 Z" fill="#FFFFFF"/>
+  <path d="M64,52 L76,66 L64,62 Z" fill="#FFFFFF"/>
+  <path d="M46,66 L50,82 L54,66 Z" fill="#FFDE00"/>
+</svg>'''),
+    'wizard': b64encode(b'''<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+  <defs>
+    <linearGradient id="grad_wiz" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#00c6ff;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#0072ff;stop-opacity:1" />
+    </linearGradient>
+  </defs>
+  <rect width="100" height="100" rx="20" fill="url(#grad_wiz)"/>
+  <path d="M30,70 L65,35 L70,40 L35,75 Z" fill="#FFFFFF"/>
+  <rect x="63" y="32" width="10" height="10" rx="2" transform="rotate(45 68 37)" fill="#FFD700"/>
+  <polygon points="50,25 52,30 57,30 53,33 55,38 50,35 45,38 47,33 43,30 48,30" fill="#FFFFFF"/>
+  <polygon points="75,50 76.5,53.5 80,53.5 77,55.5 78.5,59 75,57 71.5,59 73,55.5 70,53.5 73.5,53.5" fill="#FFFFFF"/>
+  <circle cx="45" cy="40" r="2" fill="#FFFFFF"/>
+  <circle cx="60" cy="55" r="2" fill="#FFFFFF"/>
+</svg>'''),
+    'lightning': b64encode(b'''<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+  <defs>
+    <linearGradient id="grad_light" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#F2994A;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#F2C94C;stop-opacity:1" />
+    </linearGradient>
+  </defs>
+  <rect width="100" height="100" rx="20" fill="url(#grad_light)"/>
+  <polygon points="56,20 28,52 48,52 44,80 72,48 52,48" fill="#FFFFFF"/>
+</svg>'''),
+    'shield': b64encode(b'''<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+  <defs>
+    <linearGradient id="grad_shd" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#11998e;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#38ef7d;stop-opacity:1" />
+    </linearGradient>
+  </defs>
+  <rect width="100" height="100" rx="20" fill="url(#grad_shd)"/>
+  <path d="M30,26 L50,18 L70,26 L70,50 C70,66 50,80 50,80 C50,80 30,66 30,50 Z" fill="#FFFFFF"/>
+  <path d="M42,48 L48,54 L58,38" stroke="#11998e" stroke-width="6" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>'''),
+}
+
+
 class Agent(models.Model):
     """
     AI Agent Profile (mcp.agent)
@@ -95,10 +241,34 @@ class Agent(models.Model):
         default=0,
         help=_('Kanban color (0-11) for visual grouping'),
     )
+    premade_avatar = fields.Selection(
+        [
+            ('custom', _('Custom Upload')),
+            ('generic', _('Generic AI (Robot)')),
+            ('sales', _('Sales Assistant')),
+            ('accounting', _('Accounting Assistant')),
+            ('inventory', _('Inventory Assistant')),
+            ('developer', _('Developer Assistant')),
+            ('support', _('Support Assistant')),
+            ('brain', _('Neural AI (Brain)')),
+            ('rocket', _('Speed Optimizer (Rocket)')),
+            ('wizard', _('Automation Wizard')),
+            ('lightning', _('Fast Bolt')),
+            ('shield', _('Security Shield')),
+        ],
+        string=_('Preset Avatar'),
+        default='custom',
+        help=_('Choose a preset icon or upload your custom one'),
+    )
     avatar = fields.Binary(
         string=_('Avatar'),
         help=_('Profile image for agent'),
     )
+
+    @api.onchange('premade_avatar')
+    def _onchange_premade_avatar(self):
+        if self.premade_avatar and self.premade_avatar != 'custom':
+            self.avatar = PREMADE_AVATARS.get(self.premade_avatar)
 
     # ── Provider & Model Configuration ──────────────────────────────
     provider = fields.Selection(

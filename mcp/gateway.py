@@ -397,9 +397,12 @@ class McpGateway:
 
         # ── 4b. Add tool usage rules to prevent hallucination ───────────────
         system_prompt += """
-IMPORTANT TOOL USAGE RULES:
+CRITICAL TOOL USAGE RULES (DO NOT HALLUCINATE):
 - You must call a tool for EVERY query or action request, even if you performed a similar action earlier in this session or have it in memory/history.
 - NEVER reply with cached or previously retrieved data from history or memory if the user is asking to look up, search, list, or show information. Always run a fresh tool call to get the latest database state.
+- Never answer database-related questions (invoices, partners, orders, balances, counts) from memory.
+- Always execute a fresh tool call to get real-time data from Odoo.
+- If you need field names for a model, call get_model_schema first; do not guess schemas.
 - Do not bypass tool calls. Bypassing tool calls and answering from memory is strictly prohibited.
 - Do not assume you know what is in the database. Always query the database using the tools.
 - Each user request is independent. Do not assume a previous tool call satisfies the current request.
@@ -483,10 +486,22 @@ IMAGE FIELDS: When search_read returns a field like image_1920, image_128, etc.,
                 )
                 if _att_rows:
                     _att = _att_rows[0]
+                    _SPREADSHEET_TYPES = {
+                        'application/vnd.ms-excel',
+                        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                        'application/vnd.oasis.opendocument.spreadsheet',
+                    }
+                    if _att['mimetype'] in _SPREADSHEET_TYPES:
+                        _read_hint = (
+                            f' To read the spreadsheet rows use execute_orm: '
+                            f'`return read_excel({staged_attachment_id})` — returns list of row lists, handles .xls/.xlsx/.ods automatically.'
+                        )
+                    else:
+                        _read_hint = ''
                     _att_note = (
                         f'[User uploaded file: "{_att["name"]}" (mimetype: {_att["mimetype"]}, '
-                        f'attachment_id: {staged_attachment_id}). '
-                        f'To link it to a record, use execute_orm: '
+                        f'attachment_id: {staged_attachment_id}).{_read_hint} '
+                        f'To link it to a record after processing use execute_orm: '
                         f'env["ir.attachment"].browse({staged_attachment_id}).write({{"res_model": "model.name", "res_id": record_id}})]'
                     )
                     user_message = _att_note + '\n\n' + user_message
@@ -1272,6 +1287,9 @@ NEVER use xAxis.data or series.data — always use dataset.source.
                 last_tool_name = tool_calls[-1].get('name', 'unknown')
 
             # Execute each tool call and collect results
+            _TERMINAL_TOOLS = frozenset(['create_echart', 'create_record', 'update_record', 'delete_record'])
+            _terminal_results = []  # collect (tool_name, parsed_result) for all terminal successes
+
             for i, tool_call in enumerate(tool_calls):
                 tool_name = tool_call['name']
                 arguments = tool_call['arguments']
@@ -1387,19 +1405,26 @@ NEVER use xAxis.data or series.data — always use dataset.source.
                 # Append to messages_to_send so it goes in the next provider call
                 self._append_tool_result(provider, messages_to_send, tool_call_id, tool_name, result, message_format)
 
-                # Stop loop after terminal write tools — AI cannot usefully continue after these
-                _TERMINAL_TOOLS = frozenset(['create_echart', 'create_record', 'update_record', 'delete_record'])
+                # Collect terminal write tool results — process all parallel calls before returning
                 if tool_name in _TERMINAL_TOOLS:
                     try:
                         r = json.loads(result)
                         if not (isinstance(r, dict) and r.get('success') is False):
-                            done_msg = self._format_terminal_tool_message(tool_name, r)
-                            return {
-                                'text': done_msg,
-                                'tool_calls': [],
-                            }, [], total_tool_calls, total_input, total_output, tool_name
+                            _terminal_results.append((tool_name, r))
                     except (json.JSONDecodeError, TypeError):
                         pass
+
+            # Return after all parallel terminal tool calls have been processed
+            if _terminal_results:
+                if len(_terminal_results) == 1:
+                    t_name, t_result = _terminal_results[0]
+                    done_msg = self._format_terminal_tool_message(t_name, t_result)
+                else:
+                    done_msg = self._format_terminal_tool_messages_bulk(_terminal_results)
+                return {
+                    'text': done_msg,
+                    'tool_calls': [],
+                }, [], total_tool_calls, total_input, total_output, _terminal_results[-1][0]
 
             # Detect stuck-on-same-tool: if any non-terminal tool called 3+ times, force synthesis
             _TERMINAL_TOOLS_SET = frozenset(['create_echart', 'create_record', 'update_record', 'delete_record'])
@@ -1517,17 +1542,66 @@ NEVER use xAxis.data or series.data — always use dataset.source.
 
     def _format_terminal_tool_message(self, tool_name, result):
         if tool_name == 'create_echart':
-            name = result.get('name', 'Chart') if isinstance(result, dict) else 'Chart'
-            chart_id = result.get('id', '') if isinstance(result, dict) else ''
+            res = result.get('result', {}) if isinstance(result, dict) else {}
+            name = res.get('name', 'Chart')
+            chart_id = res.get('id', '')
             return f'Chart "{name}" created successfully (ID: {chart_id}). View it in the MCP Charts app.'
         elif tool_name == 'create_record':
-            record_id = result.get('id', '') if isinstance(result, dict) else ''
-            return f'Record created successfully (ID: {record_id}).'
+            res = result.get('result', {}) if isinstance(result, dict) else {}
+            record_id = res.get('id', '')
+            model_name = res.get('model', '')
+            display_name = ''
+            if record_id and model_name:
+                try:
+                    display_name = self.env[model_name].browse(record_id).display_name or ''
+                except Exception:
+                    pass
+            name_part = f' "{display_name}"' if display_name else ''
+            return f'Record{name_part} created successfully (ID: {record_id}).'
         elif tool_name == 'update_record':
             return 'Record(s) updated successfully.'
         elif tool_name == 'delete_record':
             return 'Record(s) deleted successfully.'
         return 'Operation completed successfully.'
+
+    def _format_terminal_tool_messages_bulk(self, terminal_results):
+        """Summary message when multiple terminal tool calls ran in parallel."""
+        create_results = [(tn, r) for tn, r in terminal_results if tn == 'create_record']
+        other_results = [(tn, r) for tn, r in terminal_results if tn != 'create_record']
+
+        lines = []
+        if create_results:
+            # Group by model
+            by_model = {}
+            for _, r in create_results:
+                res = r.get('result', {}) if isinstance(r, dict) else {}
+                model = res.get('model', 'unknown')
+                record_id = res.get('id', '')
+                display_name = ''
+                if record_id and model != 'unknown':
+                    try:
+                        display_name = self.env[model].browse(record_id).display_name or ''
+                    except Exception:
+                        pass
+                by_model.setdefault(model, []).append((record_id, display_name))
+
+            for model, records in by_model.items():
+                model_label = model
+                try:
+                    ir_model = self.env['ir.model'].search([('model', '=', model)], limit=1)
+                    if ir_model:
+                        model_label = ir_model.name
+                except Exception:
+                    pass
+                lines.append(f'{len(records)} record(s) created in {model_label}:')
+                for rid, dname in records:
+                    label = f'"{dname}"' if dname else f'ID {rid}'
+                    lines.append(f'  • {label} (ID: {rid})')
+
+        for tool_name, _ in other_results:
+            lines.append(self._format_terminal_tool_message(tool_name, {}))
+
+        return '\n'.join(lines) if lines else 'Operations completed successfully.'
 
     def _format_tool_success_html(self, tool_name, arguments, result_data):
         """
@@ -1540,10 +1614,17 @@ NEVER use xAxis.data or series.data — always use dataset.source.
 
         result_val = result_data.get('result')
 
+        # Get active user's company currency symbol
+        try:
+            company_currency_symbol = self.env.company.currency_id.symbol or '$'
+        except Exception:
+            company_currency_symbol = '$'
+
         # Create structured output
         out = {
             '_is_structured': True,
             'tool_name': tool_name,
+            'company_currency_symbol': company_currency_symbol,
         }
 
         # 1. search_read

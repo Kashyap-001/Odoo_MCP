@@ -195,10 +195,15 @@ class TestRateLimiting(TransactionCase):
 
         # Create 50 sessions
         for i in range(50):
-            self.env['mcp.session'].create({
+            session = self.env['mcp.session'].create({
                 'agent_id': self.agent.id,
                 'user_id': user.id,
                 'state': 'done',
+            })
+            self.env['mcp.session.message'].create({
+                'session_id': session.id,
+                'role': 'user',
+                'content': 'dummy message',
             })
 
         # Should still be under limit

@@ -23,7 +23,7 @@ Developer notes:
 import logging
 import re
 import base64
-from datetime import datetime
+from datetime import datetime, timedelta
 from odoo import fields, models, api, _
 
 _logger = logging.getLogger(__name__)
@@ -73,6 +73,11 @@ class Session(models.Model):
         string=_('Agent'),
         required=True,
         help=_('AI agent in this session'),
+    )
+    is_pinned = fields.Boolean(
+        string=_('Pinned'),
+        default=False,
+        help=_('If pinned, this session will not be automatically deleted by clean-up crons.'),
     )
 
     # ── Status & State ──────────────────────────────────────────────
@@ -284,6 +289,31 @@ class Session(models.Model):
                     ('session_message_ids', '=', False),
                 ]).unlink()
         return records
+
+    @api.model
+    def cron_cleanup_sessions(self):
+        """Called by Odoo Cron to delete empty and stale sessions."""
+        # 1. Delete all empty sessions (exempting pinned ones)
+        empty_sessions = self.search([
+            ('session_message_ids', '=', False),
+            ('is_pinned', '=', False)
+        ])
+        empty_count = len(empty_sessions)
+        if empty_sessions:
+            empty_sessions.unlink()
+
+        # 2. Delete sessions older than 30 days (exempting pinned ones)
+        limit_date = fields.Datetime.now() - timedelta(days=30)
+        stale_sessions = self.search([
+            ('create_date', '<', limit_date),
+            ('is_pinned', '=', False)
+        ])
+        stale_count = len(stale_sessions)
+        if stale_sessions:
+            stale_sessions.unlink()
+
+        _logger.info("MCP Cleanup: Deleted %d empty sessions and %d stale sessions.", empty_count, stale_count)
+        return True
 
     @api.depends('session_message_ids')
     def _compute_tool_call_count(self):

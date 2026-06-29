@@ -197,7 +197,7 @@ class TestToolDescriptions(TransactionCase):
 
         desc = tool.description
         self.assertIsNotNone(desc)
-        self.assertIn('Query Odoo database records', desc)
+        self.assertIn('Find, list, filter, or count records', desc)
 
 
 class TestToolDispatcherDatetime(TransactionCase):

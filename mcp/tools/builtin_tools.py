@@ -266,7 +266,7 @@ BUILTIN_TOOLS = [
     {
         'name': 'execute_orm',
         'display_name_label': 'Execute Backend Script (safe_eval)',
-        'description': 'Evaluate arbitrary python script blocks utilizing Odoo backend environment and libraries in safe_eval.',
+        'description': 'Evaluate arbitrary python script blocks utilizing Odoo backend environment in safe_eval. Do NOT use python "import" statements (allowed modules: base64, io, xlrd, openpyxl, re, json, datetime, math are preloaded and available directly). Do NOT use python "with" statements (they are forbidden by Odoo safe_eval; write explicit assignments and close manually instead).',
         'tool_type': 'odoo',
         'category_id': False,
         'odoo_model': 'ir.model',
@@ -276,7 +276,7 @@ BUILTIN_TOOLS = [
         'input_schema': json.dumps({
             'type': 'object',
             'properties': {
-                'code': {'type': 'string', 'description': 'Python block to execute (expose env, user, Command)'},
+                'code': {'type': 'string', 'description': 'Python block to execute (expose env, user, Command, base64, io, BytesIO, StringIO, xlrd, openpyxl, json, re, math)'},
             },
             'required': ['code'],
         }),

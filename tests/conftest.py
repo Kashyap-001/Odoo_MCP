@@ -10,12 +10,16 @@ from unittest.mock import MagicMock, patch
 # Create mock Odoo modules
 class MockOdooModule:
     """Mock for odoo module."""
+    __path__ = []
     def __getattr__(self, name):
-        return getattr(self, name, MockOdooSubModule())
+        if name == '_':
+            return lambda x: x
+        return MockOdooSubModule()
 
 
 class MockOdooSubModule:
     """Mock for submodules like odoo.tests, odoo.exceptions."""
+    __path__ = []
     def __getattr__(self, name):
         if name == 'fields':
             return MagicMock()
@@ -32,17 +36,17 @@ class MockOdooSubModule:
             return Exception
         if name == 'UserError':
             return Exception
+        if name == 'ValidationError':
+            return Exception
         return MagicMock()
 
 
-class MockTransactionCase:
+import unittest
+
+class MockTransactionCase(unittest.TestCase):
     """Mock TransactionCase for tests that still use it."""
     def setUp(self):
-        self.env = MagicMock()
-        self.env.user = MagicMock()
-        self.env.user.id = 1
-
-    def __init__(self):
+        super().setUp()
         self.env = MagicMock()
         self.env.user = MagicMock()
         self.env.user.id = 1
@@ -55,6 +59,11 @@ sys.modules['odoo.tests'].TransactionCase = MockTransactionCase
 sys.modules['odoo.exceptions'] = MagicMock()
 sys.modules['odoo.exceptions'].AccessError = Exception
 sys.modules['odoo.exceptions'].UserError = Exception
+sys.modules['odoo.exceptions'].ValidationError = Exception
+sys.modules['odoo.fields'] = MockOdooSubModule()
+sys.modules['odoo.http'] = MockOdooSubModule()
+sys.modules['odoo.tools'] = MockOdooSubModule()
+sys.modules['odoo.tools.safe_eval'] = MockOdooSubModule()
 sys.modules['odoo import'] = MagicMock()  # Handle "from odoo import x"
 
 

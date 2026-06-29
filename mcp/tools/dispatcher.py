@@ -44,6 +44,15 @@ _safe_itertools = wrap_module(itertools, [
 _safe_hashlib = wrap_module(hashlib, ['md5', 'sha1', 'sha256', 'sha512', 'new', 'pbkdf2_hmac'])
 _safe_hmac = wrap_module(hmac, ['new', 'digest', 'compare_digest'])
 
+import io as _io
+import xlrd as _xlrd
+import openpyxl as _openpyxl
+
+_safe_base64 = wrap_module(base64, ['b64encode', 'b64decode', 'encodebytes', 'decodebytes'])
+_safe_io = wrap_module(_io, ['BytesIO', 'StringIO'])
+_safe_xlrd = wrap_module(_xlrd, ['open_workbook', 'xldate_as_datetime'])
+_safe_openpyxl = wrap_module(_openpyxl, ['load_workbook'])
+
 # Module root resolved from __file__ so code tools work on any machine
 _MODULE_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -300,14 +309,14 @@ class ToolDispatcher:
     def _dispatch_create_record(self, arguments, env, user):
         model_name = arguments['model']
         values = arguments['values']
-        
+
         processed_vals = self._prepare_create_values(values, model_name, env)
         if isinstance(processed_vals, dict) and 'error' in processed_vals:
             raise ValueError(processed_vals['error'])
-            
+
         model = env[model_name].with_user(user)
         record = model.create(processed_vals)
-        return {'id': record.id}
+        return {'id': record.id, 'model': model_name}
 
     def _dispatch_update_record(self, arguments, env, user):
         model_name = arguments['model']
@@ -676,6 +685,63 @@ class ToolDispatcher:
 
     def _dispatch_execute_orm(self, arguments, env, user):
         code = arguments['code']
+
+        # Strip ALL import lines — every needed module is pre-loaded in eval_context
+        code = '\n'.join(
+            line for line in code.splitlines()
+            if not line.strip().startswith(('import ', 'from '))
+        )
+
+        def _read_excel(attachment_id, sheet=0):
+            """Read xls/xlsx/ods attachment → list of row lists.
+            attachment.datas is base64 in Odoo ORM; attachment.raw is the raw bytes."""
+            import io as _real_io
+            import zipfile as _zipfile
+            import xml.etree.ElementTree as _ET
+            att = env['ir.attachment'].browse(attachment_id)
+            raw_b64 = att.datas
+            if not raw_b64:
+                raise ValueError(f"Attachment {attachment_id} has no data")
+            raw = base64.b64decode(raw_b64)  # datas is ALWAYS base64 in Odoo ORM
+            if raw[:4] == b'\xD0\xCF\x11\xE0':  # OLE2 magic → .xls
+                wb = _xlrd.open_workbook(file_contents=raw)
+                ws = wb.sheet_by_index(sheet)
+                return [ws.row_values(r) for r in range(ws.nrows)]
+            # ZIP-based: peek at content to distinguish xlsx vs ods
+            try:
+                with _zipfile.ZipFile(_real_io.BytesIO(raw)) as zf:
+                    names = zf.namelist()
+                if 'content.xml' in names:  # ODS
+                    _NS_TABLE = 'urn:oasis:names:tc:opendocument:xmlns:table:1.0'
+                    _NS_TEXT  = 'urn:oasis:names:tc:opendocument:xmlns:text:1.0'
+                    with _zipfile.ZipFile(_real_io.BytesIO(raw)) as zf:
+                        tree = _ET.parse(zf.open('content.xml'))
+                    sheets = list(tree.getroot().iter(f'{{{_NS_TABLE}}}table'))
+                    if not sheets:
+                        return []
+                    ws = sheets[min(sheet, len(sheets) - 1)]
+                    rows = []
+                    for row_el in ws.iter(f'{{{_NS_TABLE}}}table-row'):
+                        cells = []
+                        for cell in row_el:
+                            tag = cell.tag.split('}')[-1]
+                            if tag in ('table-cell', 'covered-table-cell'):
+                                repeat = int(cell.get(f'{{{_NS_TABLE}}}number-columns-repeated', 1))
+                                text = next((p.text or '' for p in cell.iter(f'{{{_NS_TEXT}}}p')), '')
+                                cells.extend([text] * repeat)
+                        # trim trailing blanks and skip empty rows
+                        while cells and cells[-1] == '':
+                            cells.pop()
+                        if cells:
+                            rows.append(cells)
+                    return rows
+                else:  # xlsx
+                    wb = _openpyxl.load_workbook(_real_io.BytesIO(raw))
+                    ws = wb.worksheets[min(sheet, len(wb.worksheets) - 1)]
+                    return [list(row) for row in ws.iter_rows(values_only=True)]
+            except _zipfile.BadZipFile:
+                raise ValueError("Attachment is not a valid Excel/ODS file (bad ZIP)")
+
         eval_context = {
             'env': env,
             'user': user,
@@ -687,11 +753,19 @@ class ToolDispatcher:
             'itertools': _safe_itertools,
             'hashlib': _safe_hashlib,
             'hmac': _safe_hmac,
+            'base64': _safe_base64,
+            'io': _safe_io,
+            'BytesIO': _safe_io.BytesIO,
+            'StringIO': _safe_io.StringIO,
+            'xlrd': _safe_xlrd,
+            'openpyxl': _safe_openpyxl,
             'datetime': datetime,
             'date': date,
             'timedelta': timedelta,
             'defaultdict': defaultdict,
             'Counter': Counter,
+            'read_excel': _read_excel,
+            'print': print,
         }
         # Wrap in a function so multi-line code with assignments works.
         # Use AST to find the last Expr statement and insert return at its start line.
@@ -892,11 +966,11 @@ class ToolDispatcher:
                                 cmd_list.append((item[0], item[1], item[2]))
                         value = cmd_list
                     elif value and isinstance(value[0], int):
-                        value = Command.set(value)
+                        value = [Command.set(value)]
                 elif isinstance(value, str) and value:
                     try:
                         ids = [int(x.strip()) for x in value.split(',') if x.strip().isdigit()]
-                        value = Command.set(ids)
+                        value = [Command.set(ids)]
                     except ValueError:
                         pass
             vals[key] = value
