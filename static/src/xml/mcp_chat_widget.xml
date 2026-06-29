@@ -115,7 +115,7 @@
                 </div>
 
                 <!-- Chat History -->
-                <div class="mcp-chat-history" t-if="state.selectedAgent">
+                <div class="mcp-chat-history" t-ref="chatHistory" t-if="state.selectedAgent">
                     <div class="mcp-empty-state" t-if="state.messages.length === 0 &amp;&amp; !state.loading">
                         <i class="fa fa-bolt fa-3x mb-3 text-primary opacity-25"/>
                         <p>Start a new session with <t t-esc="state.selectedAgent.name"/></p>
@@ -128,7 +128,7 @@
                     </t>
 
                     <!-- Typing indicator — shown while AI is processing -->
-                    <div t-if="state.isTyping" class="mcp-assistant-msg" style="align-self: flex-start;">
+                    <div t-if="state.isTyping" class="mcp-assistant-msg mcp-is-loading" style="align-self: flex-start;">
                         <div class="mcp-typing-indicator">
                             <span/><span/><span/>
                         </div>
@@ -137,7 +137,18 @@
 
                 <!-- Input Area -->
                 <div class="mcp-input-area" t-if="state.selectedAgent">
+                    <t t-if="state.pendingFile">
+                        <div class="mcp-file-chip">
+                            <i class="fa fa-file-o me-1"/>
+                            <span class="mcp-file-chip-name"><t t-esc="state.pendingFile.name"/></span>
+                            <button class="mcp-file-chip-remove" t-on-click="() => { state.pendingFile = null }" title="Remove">×</button>
+                        </div>
+                    </t>
                     <div class="mcp-input-wrapper">
+                        <button class="mcp-attach-btn" t-on-click="onAttachClick" title="Attach file" t-att-disabled="state.loading">
+                            <i class="fa fa-paperclip"/>
+                        </button>
+                        <input type="file" class="d-none" t-ref="fileInput" t-on-change="onFileChange"/>
                         <textarea
                             class="mcp-message-input"
                             t-ref="messageInput"
@@ -339,33 +350,35 @@
                     Record <b>#<t t-esc="message.structuredData.res_id"/></b> — <b><t t-esc="message.structuredData.model"/></b>
                 </div>
                 <t t-if="message.structuredData.record">
-                    <table class="table table-sm mcp-result-table">
-                        <tbody>
-                            <t t-foreach="Object.entries(message.structuredData.record)" t-as="entry" t-key="entry[0]">
-                                <t t-set="ft" t-value="message.structuredData.field_types and message.structuredData.field_types[entry[0]]"/>
-                                <tr>
-                                    <td class="fw-bold text-muted" style="width: 35%"><t t-esc="entry[0]"/></td>
-                                    <td>
-                                        <t t-if="ft and ft.type === 'binary' and typeof entry[1] === 'string' and entry[1].startsWith('/')">
-                                            <img t-att-src="entry[1]" style="height:60px;max-width:120px;object-fit:contain;border-radius:4px;"/>
-                                        </t>
-                                        <t t-elif="ft and ft.type === 'boolean'">
-                                            <span t-att-class="entry[1] ? 'text-success fw-bold' : 'text-muted'"><t t-esc="entry[1] ? '✓' : '—'"/></span>
-                                        </t>
-                                        <t t-elif="ft and ft.type === 'selection'">
-                                            <span t-att-class="'badge ' + (['done','paid','posted','sale','open','confirm'].includes(entry[1]) ? 'bg-success' : ['cancel','cancelled','refused'].includes(entry[1]) ? 'bg-danger' : ['draft','new'].includes(entry[1]) ? 'bg-secondary' : 'bg-primary')"><t t-esc="entry[1]"/></span>
-                                        </t>
-                                        <t t-elif="ft and ft.type === 'html'">
-                                            <span t-out="entry[1]"/>
-                                        </t>
-                                        <t t-else="">
-                                            <t t-esc="this._formatCellValue(entry[1], ft, message.structuredData.record)"/>
-                                        </t>
-                                    </td>
-                                </tr>
-                            </t>
-                        </tbody>
-                    </table>
+                    <div class="mcp-result-scroll">
+                        <table class="table table-sm table-bordered mcp-result-table">
+                            <tbody>
+                                <t t-foreach="Object.entries(message.structuredData.record)" t-as="entry" t-key="entry[0]">
+                                    <t t-set="ft" t-value="message.structuredData.field_types and message.structuredData.field_types[entry[0]]"/>
+                                    <tr>
+                                        <td class="fw-bold text-muted" style="width: 35%"><t t-esc="entry[0]"/></td>
+                                        <td>
+                                            <t t-if="ft and ft.type === 'binary' and typeof entry[1] === 'string' and entry[1].startsWith('/')">
+                                                <img t-att-src="entry[1]" style="height:60px;max-width:120px;object-fit:contain;border-radius:4px;"/>
+                                            </t>
+                                            <t t-elif="ft and ft.type === 'boolean'">
+                                                <span t-att-class="entry[1] ? 'text-success fw-bold' : 'text-muted'"><t t-esc="entry[1] ? '✓' : '—'"/></span>
+                                            </t>
+                                            <t t-elif="ft and ft.type === 'selection'">
+                                                <span t-att-class="'badge ' + (['done','paid','posted','sale','open','confirm'].includes(entry[1]) ? 'bg-success' : ['cancel','cancelled','refused'].includes(entry[1]) ? 'bg-danger' : ['draft','new'].includes(entry[1]) ? 'bg-secondary' : 'bg-primary')"><t t-esc="entry[1]"/></span>
+                                            </t>
+                                            <t t-elif="ft and ft.type === 'html'">
+                                                <span t-out="entry[1]"/>
+                                            </t>
+                                            <t t-else="">
+                                                <t t-esc="this._formatCellValue(entry[1], ft, message.structuredData.record)"/>
+                                            </t>
+                                        </td>
+                                    </tr>
+                                </t>
+                            </tbody>
+                        </table>
+                    </div>
                 </t>
             </t>
             <!-- read_group -->
@@ -460,6 +473,139 @@
                     </table>
                 </div>
             </t>
+            <!-- post_message -->
+            <t t-elif="message.structuredData.tool_name === 'post_message'">
+                <div class="mcp-tool-result-header">
+                    <i class="fa fa-comment-o me-2"/>
+                    Message posted on <b><t t-esc="message.structuredData.model"/></b> #<t t-esc="message.structuredData.record_id"/>
+                    <span class="badge bg-secondary ms-2">ID #<t t-esc="message.structuredData.message_id"/></span>
+                </div>
+            </t>
+            <!-- get_attachments -->
+            <t t-elif="message.structuredData.tool_name === 'get_attachments'">
+                <div class="mcp-tool-result-header">
+                    <i class="fa fa-paperclip me-2"/>
+                    <b><t t-esc="message.structuredData.count"/></b> attachment(s) on
+                    <b><t t-esc="message.structuredData.model"/></b> #<t t-esc="message.structuredData.record_id"/>
+                </div>
+                <t t-if="message.structuredData.attachments and message.structuredData.attachments.length">
+                    <ul class="list-unstyled mt-1 mb-0 ps-2">
+                        <t t-foreach="message.structuredData.attachments" t-as="att" t-key="att.id">
+                            <li class="py-1">
+                                <a t-att-href="att.url" target="_blank" class="text-decoration-none">
+                                    <i class="fa fa-file-o me-1"/><t t-esc="att.name"/>
+                                </a>
+                                <small class="text-muted ms-2"><t t-esc="att.mimetype"/></small>
+                            </li>
+                        </t>
+                    </ul>
+                </t>
+                <t t-else="">
+                    <p class="text-muted fst-italic mb-0">No attachments found.</p>
+                </t>
+            </t>
+            <!-- upload_attachment -->
+            <t t-elif="message.structuredData.tool_name === 'upload_attachment'">
+                <div class="mcp-tool-result-header">
+                    <i class="fa fa-upload me-2 text-success"/>
+                    Uploaded <b><t t-esc="message.structuredData.name"/></b> to
+                    <b><t t-esc="message.structuredData.model"/></b> #<t t-esc="message.structuredData.record_id"/>
+                    <span class="badge bg-success ms-2">#<t t-esc="message.structuredData.id"/></span>
+                </div>
+            </t>
+            <!-- set_binary_field -->
+            <t t-elif="message.structuredData.tool_name === 'set_binary_field'">
+                <div class="mcp-tool-result-header">
+                    <i class="fa fa-image me-2 text-success"/>
+                    Set <b><t t-esc="message.structuredData.field"/></b> on
+                    <b><t t-esc="message.structuredData.model"/></b> #<t t-esc="message.structuredData.record_id"/>
+                    <small class="text-muted ms-2">(<t t-esc="message.structuredData.size_bytes"/> bytes)</small>
+                </div>
+            </t>
+            <!-- create_records -->
+            <t t-elif="message.structuredData.tool_name === 'create_records'">
+                <div class="mcp-tool-result-header">
+                    <i class="fa fa-plus-circle text-success me-2"/>
+                    Created <b><t t-esc="message.structuredData.count"/></b> records in
+                    <b><t t-esc="message.structuredData.model"/></b>
+                </div>
+            </t>
+            <!-- update_records -->
+            <t t-elif="message.structuredData.tool_name === 'update_records'">
+                <div class="mcp-tool-result-header">
+                    <i class="fa fa-pencil text-info me-2"/>
+                    Updated <b><t t-esc="message.structuredData.count"/></b> records in
+                    <b><t t-esc="message.structuredData.model"/></b>
+                </div>
+            </t>
+            <!-- delete_records -->
+            <t t-elif="message.structuredData.tool_name === 'delete_records'">
+                <div class="mcp-tool-result-header">
+                    <i class="fa fa-trash text-danger me-2"/>
+                    Deleted <b><t t-esc="message.structuredData.count"/></b> records from
+                    <b><t t-esc="message.structuredData.model"/></b>
+                </div>
+            </t>
+            <!-- lookup_model_history -->
+            <t t-elif="message.structuredData.tool_name === 'lookup_model_history'">
+                <div class="mcp-tool-result-header">
+                    <i class="fa fa-history me-2"/>
+                    Model lookup: <b><t t-esc="message.structuredData.queried"/></b>
+                    <t t-if="message.structuredData.renamed">
+                        → <b class="text-success"><t t-esc="message.structuredData.current_name"/></b>
+                    </t>
+                </div>
+                <p class="small text-muted mb-0 mt-1"><t t-esc="message.structuredData.note"/></p>
+            </t>
+            <!-- accounting_health_summary -->
+            <t t-elif="message.structuredData.tool_name === 'accounting_health_summary'">
+                <div class="mcp-tool-result-header">
+                    <i class="fa fa-bar-chart me-2"/>
+                    Accounting Health — <small class="text-muted">as of <t t-esc="message.structuredData.as_of"/></small>
+                </div>
+                <t t-if="message.structuredData.receivables">
+                    <table class="table table-sm table-bordered mcp-result-table mt-1">
+                        <thead><tr><th></th><th>Open</th><th>Overdue</th></tr></thead>
+                        <tbody>
+                            <tr>
+                                <td class="fw-bold">Receivables (AR)</td>
+                                <td><t t-esc="message.structuredData.receivables.total_count"/> inv —
+                                    $<t t-esc="(message.structuredData.receivables.total_amount || 0).toFixed(2)"/></td>
+                                <td class="text-danger"><t t-esc="message.structuredData.receivables.overdue_count"/> overdue —
+                                    $<t t-esc="(message.structuredData.receivables.overdue_amount || 0).toFixed(2)"/></td>
+                            </tr>
+                            <tr>
+                                <td class="fw-bold">Payables (AP)</td>
+                                <td><t t-esc="message.structuredData.payables.total_count"/> bills —
+                                    $<t t-esc="(message.structuredData.payables.total_amount || 0).toFixed(2)"/></td>
+                                <td class="text-danger"><t t-esc="message.structuredData.payables.overdue_count"/> overdue —
+                                    $<t t-esc="(message.structuredData.payables.overdue_amount || 0).toFixed(2)"/></td>
+                            </tr>
+                        </tbody>
+                    </table>
+                    <p class="small text-muted mb-0">Draft invoice backlog: <b><t t-esc="message.structuredData.draft_invoice_backlog"/></b></p>
+                </t>
+            </t>
+            <!-- import_from_file -->
+            <t t-elif="message.structuredData.tool_name === 'import_from_file'">
+                <div class="mcp-tool-result-header">
+                    <i class="fa fa-upload me-2"/>
+                    Import — <b><t t-esc="message.structuredData.source_file"/></b>
+                    into <code><t t-esc="message.structuredData.model"/></code>
+                </div>
+                <p class="mb-1">
+                    <span class="badge bg-success me-2"><t t-esc="message.structuredData.created_count"/> created</span>
+                    <span class="text-muted small"><t t-esc="message.structuredData.total_rows"/> rows · fields: <t t-esc="(message.structuredData.fields || []).join(', ')"/></span>
+                </p>
+                <t t-if="message.structuredData.errors and message.structuredData.errors.length">
+                    <div class="alert alert-warning p-2 small mt-1">
+                        <b>Warnings/Errors:</b>
+                        <t t-foreach="message.structuredData.errors" t-as="err" t-key="err_index">
+                            <div>Row <t t-esc="err.rows || err.row"/>: <t t-esc="err.message"/></div>
+                        </t>
+                    </div>
+                </t>
+            </t>
             <!-- generic fallback — shows JSON result -->
             <t t-else="">
                 <div class="mcp-tool-result-header">
@@ -494,6 +640,10 @@
                 <t t-if="message.structuredData">
                     <t t-call="mcp_gateway.ToolResultCard"/>
                 </t>
+            </t>
+            <t t-elif="message.role === 'error'">
+                <i class="fa fa-exclamation-triangle me-2 text-danger"/>
+                <span><t t-esc="message.content"/></span>
             </t>
             <t t-elif="message.role === 'system'">
                 <div class="mcp-system-content">

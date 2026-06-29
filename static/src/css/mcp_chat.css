@@ -3,16 +3,16 @@
 :root {
   --mcp-bg-primary: #ffffff;
   --mcp-bg-secondary: #f8fafc;
-  --mcp-bg-sidebar: #1e293b;
+  --mcp-bg-sidebar: #0f1923;
   --mcp-sidebar-text: #f1f5f9;
-  --mcp-sidebar-active: #334155;
-  --mcp-border-color: #e2e8f0;
+  --mcp-sidebar-active: #1a2a3a;
+  --mcp-border-color: #dde3ed;
   --mcp-text-main: #0f172a;
   --mcp-text-muted: #64748b;
   --mcp-primary: #2563eb;
   --mcp-primary-light: #eff6ff;
-  --mcp-ai-accent: #0ea5e9;
-  --mcp-user-bubble: #2563eb;
+  --mcp-ai-accent: #22d3ee;
+  --mcp-user-bubble: #1d4ed8;
   --mcp-ai-bubble: #f1f5f9;
   --mcp-font-mono: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
 }
@@ -420,10 +420,138 @@
   margin: 0;
 }
 
-/* LLM text replies — preserve newlines */
+/* Markdown-rendered assistant messages — no pre-wrap, HTML handles structure */
 .mcp-assistant-msg {
-  white-space: pre-wrap;
+  white-space: normal;
+  line-height: 1.65;
 }
+
+/* Fade-in for new assistant messages */
+@keyframes mcp-fade-in {
+  from { opacity: 0; transform: translateY(5px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.mcp-assistant-msg {
+  animation: mcp-fade-in 200ms ease-out;
+}
+
+/* Thinking bar — pulsing accent on the loading bubble */
+.mcp-is-loading {
+  position: relative;
+  overflow: visible;
+}
+.mcp-is-loading::before {
+  content: '';
+  position: absolute;
+  left: -3px; top: 0; bottom: 0; width: 3px;
+  background: var(--mcp-ai-accent);
+  border-radius: 3px 0 0 3px;
+  animation: mcp-pulse-bar 1.2s ease-in-out infinite;
+}
+@keyframes mcp-pulse-bar {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0.25; }
+}
+
+/* Tool result card — accent left border */
+.mcp-tool-result {
+  border-left: 3px solid var(--mcp-ai-accent);
+}
+
+/* Error message bubble */
+.mcp-error-msg {
+  align-self: flex-start;
+  background: #fff5f5;
+  border: 1px solid #fecaca;
+  border-left: 3px solid #ef4444;
+  color: #7f1d1d;
+  padding: 0.65rem 1rem;
+  border-radius: 0.5rem;
+  max-width: 80%;
+  font-size: 0.9rem;
+}
+
+/* ── Markdown output styles ──────────────────────────────────────────── */
+
+.mcp-md-p {
+  margin: 0 0 0.4em;
+  line-height: 1.65;
+}
+.mcp-md-p:last-child { margin-bottom: 0; }
+
+.mcp-md-h {
+  font-weight: 700;
+  margin: 0.75em 0 0.35em;
+  color: var(--mcp-text-main);
+  line-height: 1.3;
+}
+h3.mcp-md-h { font-size: 1rem; }
+h4.mcp-md-h { font-size: 0.95rem; }
+h5.mcp-md-h { font-size: 0.9rem; }
+
+.mcp-md-ul {
+  margin: 0.25em 0 0.5em 1.25em;
+  padding: 0;
+}
+.mcp-md-ul li { margin-bottom: 0.2em; }
+
+.mcp-md-hr {
+  border: none;
+  border-top: 1px solid var(--mcp-border-color);
+  margin: 0.75em 0;
+}
+
+.mcp-md-inline {
+  font-family: var(--mcp-font-mono);
+  font-size: 0.82em;
+  background: #e8edf5;
+  color: #1e3a5f;
+  padding: 0.1em 0.35em;
+  border-radius: 3px;
+}
+
+/* Fenced code block */
+.mcp-md-code {
+  position: relative;
+  background: #141e2e;
+  color: #e2e8f0;
+  padding: 0.85rem 1rem 0.85rem 1rem;
+  border-radius: 0.5rem;
+  font-size: 0.78rem;
+  font-family: var(--mcp-font-mono);
+  white-space: pre;
+  overflow-x: auto;
+  margin: 0.5em 0;
+}
+.mcp-md-code[data-lang]::after {
+  content: attr(data-lang);
+  position: absolute;
+  top: 0.4rem; right: 2.5rem;
+  font-size: 0.65rem;
+  color: #64748b;
+  font-family: var(--mcp-font-mono);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+/* Copy button inside code block */
+.mcp-copy-btn {
+  position: absolute;
+  top: 0.4rem; right: 0.4rem;
+  background: #1e293b;
+  border: 1px solid #334155;
+  color: #94a3b8;
+  border-radius: 4px;
+  width: 1.75rem; height: 1.75rem;
+  display: flex; align-items: center; justify-content: center;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.15s, color 0.15s;
+  font-size: 0.75rem;
+}
+.mcp-md-code:hover .mcp-copy-btn { opacity: 1; }
+.mcp-copy-btn:hover { color: var(--mcp-ai-accent); border-color: var(--mcp-ai-accent); }
+.mcp-copy-btn.mcp-copy-done { color: #22c55e; border-color: #22c55e; opacity: 1; }
 
 /* Typing indicator (3 bouncing dots) */
 .mcp-typing-indicator {
@@ -512,6 +640,51 @@
   margin-bottom: 0.5rem;
   background: #f8fafc;
 }
+
+/* File attachment UI */
+.mcp-attach-btn {
+  background: none;
+  border: none;
+  color: #94a3b8;
+  padding: 0 8px;
+  cursor: pointer;
+  font-size: 1rem;
+  flex-shrink: 0;
+  align-self: flex-end;
+  padding-bottom: 10px;
+}
+.mcp-attach-btn:hover:not(:disabled) { color: #6366f1; }
+.mcp-attach-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+.mcp-file-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: #e8f4fd;
+  border: 1px solid #b8d8f0;
+  border-radius: 12px;
+  padding: 3px 10px;
+  font-size: 0.8rem;
+  margin-bottom: 4px;
+  max-width: 100%;
+}
+.mcp-file-chip-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 240px;
+}
+.mcp-file-chip-remove {
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: #94a3b8;
+  padding: 0;
+  line-height: 1;
+  font-size: 1rem;
+  flex-shrink: 0;
+}
+.mcp-file-chip-remove:hover { color: #ef4444; }
 
 /* Responsive */
 @media (max-width: 768px) {

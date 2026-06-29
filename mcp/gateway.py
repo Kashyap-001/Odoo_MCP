@@ -321,7 +321,8 @@ class McpGateway:
         self._logger = logging.getLogger(self.__class__.__module__)
 
     def run(self, agent_id: int, user_message: str, session_id: int = None,
-            active_model: str = None, active_id: int = None) -> dict:
+            active_model: str = None, active_id: int = None,
+            staged_attachment_id: int = None) -> dict:
         """
         Execute full agentic loop: message → provider → tools → reply.
 
@@ -473,6 +474,24 @@ IMAGE FIELDS: When search_read returns a field like image_1920, image_128, etc.,
         insert_idx = 1
         messages.insert(insert_idx, synthetic_response)
         messages.insert(insert_idx, synthetic_date_msg)
+
+        # If user uploaded a file via the chat UI, prepend context note to the message
+        if staged_attachment_id:
+            try:
+                _att_rows = self.env['ir.attachment'].search_read(
+                    [('id', '=', staged_attachment_id)], ['name', 'mimetype', 'file_size']
+                )
+                if _att_rows:
+                    _att = _att_rows[0]
+                    _att_note = (
+                        f'[User uploaded file: "{_att["name"]}" (mimetype: {_att["mimetype"]}, '
+                        f'attachment_id: {staged_attachment_id}). '
+                        f'To link it to a record, use execute_orm: '
+                        f'env["ir.attachment"].browse({staged_attachment_id}).write({{"res_model": "model.name", "res_id": record_id}})]'
+                    )
+                    user_message = _att_note + '\n\n' + user_message
+            except Exception:
+                pass  # don't break chat if attachment lookup fails
 
         # Always append the new user message
         messages.append({'role': 'user', 'content': user_message})
@@ -903,6 +922,49 @@ Quick reference - available local tools:
         if len(tool_specs) > 10:
             guidance += f"- ... and {len(tool_specs) - 10} more tools\n"
 
+        if any(t.get('name') == 'execute_orm' for t in tool_specs):
+            guidance += """
+SALE ORDER METHODS — common name confusion:
+- action_quotation_sent(ids)  → sets state='sent' ONLY, does NOT send any email
+- action_quotations_send()    → opens UI wizard, NOT usable programmatically
+- To actually send quotation emails programmatically:
+    template = env.ref('sale.email_template_edi_sale')
+    for order in env['sale.order'].browse(ids):
+        template.send_mail(order.id, force_send=True)
+
+SALE ORDER CONFIRM WORKFLOW:
+- Create order lines BEFORE calling action_confirm (lines added after may not link correctly)
+- action_confirm() → state: draft → sale (confirmed), NOT draft → sent
+
+INVOICE WORKFLOW (programmatic, no wizard needed):
+  1. Create:  inv_id = env['account.move'].create({'move_type':'out_invoice','partner_id':X,'invoice_line_ids':[(0,0,{'product_id':Y,'quantity':1,'price_unit':Z})]}).id
+  2. Post:    env['account.move'].browse(inv_id).action_post()
+  3. Pay:     env['account.payment.register'].with_context(active_model='account.move',active_ids=[inv_id]).create({}).action_create_payments()
+- NOTE: account.invoice no longer exists — it is account.move with move_type='out_invoice'
+
+PURCHASE ORDER WORKFLOW:
+- Create: env['purchase.order'].create({'partner_id':X,'order_line':[(0,0,{'product_id':Y,'product_qty':1,'price_unit':Z})]}).id
+- Confirm: env['purchase.order'].browse(po_id).button_confirm()  → state: draft → purchase
+- Receive goods: find stock.picking linked to PO via po.picking_ids, then call picking.button_validate()
+
+HR EMPLOYEE WORKFLOW:
+- Create: env['hr.employee'].create({'name':X,'job_id':Y,'department_id':Z})
+- Archive: record.write({'active': False})  or  record.toggle_active()
+- Leave request: env['hr.leave'].create({'holiday_status_id':X,'employee_id':Y,'date_from':Z,'date_to':W,'holiday_type':'employee'})
+- Leave approve: env['hr.leave'].browse(id).action_approve()
+
+REPORT/PDF GENERATION — return URL, never render_qweb_pdf:
+- DO NOT use env.ref().render_qweb_pdf() or _render_qweb_pdf() — generates huge binary
+- DO NOT guess report external IDs — they vary across Odoo versions
+- Return the download URL as a string: f'/report/pdf/{report_name}/{record_id}'
+- Common Odoo 18 report names:
+    Invoice/Bill:    account.report_invoice        (account.move)
+    Sale Order:      sale.report_saleorder         (sale.order)
+    Purchase Order:  purchase.report_purchaseorder (purchase.order)
+    Delivery Slip:   stock.report_deliveryslip     (stock.picking)
+- Example: return '/report/pdf/account.report_invoice/2'
+"""
+
         if any(t.get('name') == 'create_echart' for t in tool_specs):
             guidance += """
 CHART CREATION — create_echart (single call, no separate read_group):
@@ -1214,10 +1276,13 @@ NEVER use xAxis.data or series.data — always use dataset.source.
                 tool_name = tool_call['name']
                 arguments = tool_call['arguments']
                 tool_call_id = tool_call.get('id') or f'tc_{turn}_{i}'
-                # For get_model_schema: key by model only (different fields= args count as same call)
+                # Normalize stuck-detection key for search-type tools so varying args still count
                 _args_dict = json.loads(arguments) if isinstance(arguments, str) else (arguments or {})
                 if tool_name == 'get_model_schema':
                     _args_key = (tool_name, json.dumps({'model': _args_dict.get('model', '')}, sort_keys=True))
+                elif tool_name in ('code_search', 'code_read', 'search_module_code'):
+                    # Any 3 code searches count as stuck, regardless of query
+                    _args_key = (tool_name, '')
                 else:
                     _args_key = (tool_name, json.dumps(_args_dict, sort_keys=True, default=str))
                 tool_call_counts[_args_key] = tool_call_counts.get(_args_key, 0) + 1
@@ -1581,6 +1646,93 @@ NEVER use xAxis.data or series.data — always use dataset.source.
             out.update({
                 'model': model,
                 'count': len(res_ids)
+            })
+            return json.dumps(out)
+
+        # set_binary_field
+        elif tool_name == 'set_binary_field' and isinstance(result_val, dict):
+            out.update({
+                'model': result_val.get('model'),
+                'record_id': result_val.get('record_id'),
+                'field': result_val.get('field'),
+                'size_bytes': result_val.get('size_bytes'),
+            })
+            return json.dumps(out)
+
+        # create_records
+        elif tool_name == 'create_records' and isinstance(result_val, dict):
+            out.update({'model': result_val.get('model'), 'ids': result_val.get('ids', []), 'count': result_val.get('count', 0)})
+            return json.dumps(out)
+
+        # update_records
+        elif tool_name == 'update_records' and isinstance(result_val, dict):
+            out.update({'model': result_val.get('model'), 'count': result_val.get('count', 0)})
+            return json.dumps(out)
+
+        # delete_records
+        elif tool_name == 'delete_records' and isinstance(result_val, dict):
+            out.update({'model': arg_dict.get('model', result_val.get('model', '')), 'count': result_val.get('count', 0)})
+            return json.dumps(out)
+
+        # lookup_model_history
+        elif tool_name == 'lookup_model_history' and isinstance(result_val, dict):
+            out.update({
+                'queried': result_val.get('queried'),
+                'current_name': result_val.get('current_name'),
+                'renamed': result_val.get('renamed', False),
+                'note': result_val.get('note', ''),
+            })
+            return json.dumps(out)
+
+        # accounting_health_summary
+        elif tool_name == 'accounting_health_summary' and isinstance(result_val, dict):
+            out.update({
+                'receivables': result_val.get('receivables', {}),
+                'payables': result_val.get('payables', {}),
+                'draft_invoice_backlog': result_val.get('draft_invoice_backlog', 0),
+                'as_of': result_val.get('as_of', ''),
+            })
+            return json.dumps(out)
+
+        # import_from_file
+        elif tool_name == 'import_from_file' and isinstance(result_val, dict):
+            out.update({
+                'model': result_val.get('model'),
+                'source_file': result_val.get('source_file'),
+                'fields': result_val.get('fields', []),
+                'total_rows': result_val.get('total_rows', 0),
+                'created_count': result_val.get('created_count', 0),
+                'ids': result_val.get('ids', []),
+                'errors': result_val.get('errors', []),
+            })
+            return json.dumps(out)
+
+        # post_message
+        elif tool_name == 'post_message' and isinstance(result_val, dict):
+            out.update({
+                'message_id': result_val.get('message_id'),
+                'model': result_val.get('model'),
+                'record_id': result_val.get('record_id'),
+            })
+            return json.dumps(out)
+
+        # get_attachments
+        elif tool_name == 'get_attachments' and isinstance(result_val, dict):
+            out.update({
+                'model': result_val.get('model'),
+                'record_id': result_val.get('record_id'),
+                'attachments': result_val.get('attachments', []),
+                'count': result_val.get('count', 0),
+            })
+            return json.dumps(out)
+
+        # upload_attachment
+        elif tool_name == 'upload_attachment' and isinstance(result_val, dict):
+            out.update({
+                'id': result_val.get('id'),
+                'name': result_val.get('name'),
+                'model': result_val.get('model'),
+                'record_id': result_val.get('record_id'),
             })
             return json.dumps(out)
 

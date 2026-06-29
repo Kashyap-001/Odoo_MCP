@@ -13,6 +13,7 @@ import os
 import subprocess
 import requests
 import base64
+import urllib.request as _urllib_req
 import hashlib
 import hmac
 import math
@@ -46,12 +47,32 @@ _safe_hmac = wrap_module(hmac, ['new', 'digest', 'compare_digest'])
 # Module root resolved from __file__ so code tools work on any machine
 _MODULE_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-# Odoo installation root (e.g. /home/.../odoo18) — allows code tools to read core addon files
+# Runtime addons paths — populated by Odoo at startup, correct even when system odoo is importable
 try:
-    import odoo as _odoo_pkg
-    _ODOO_ROOT = os.path.normpath(os.path.join(os.path.dirname(_odoo_pkg.__file__), '..'))
+    import odoo.addons as _odoo_addons_pkg
+    _ODOO_ADDONS_PATHS = list(_odoo_addons_pkg.__path__)
 except Exception:
-    _ODOO_ROOT = None
+    _ODOO_ADDONS_PATHS = []
+
+
+
+# pantalytics: avatar_* auto-redirect to image_1920
+_AVATAR_FIELD_RE = re.compile(r'^avatar_(128|256|512|1024|1920)$')
+
+# tuanle96: model rename history dict (copied from tools_diagnostics.py)
+_MODEL_HISTORY = {
+    'account.invoice': 'account.move',
+    'account.invoice.line': 'account.move.line',
+    'hr.holidays': 'hr.leave',
+    'hr.holidays.status': 'hr.leave.type',
+    'hr.holidays.allocation': 'hr.leave.allocation',
+    'stock.quant.move': 'stock.move',
+    'crm.case.categ': 'crm.tag',
+    'product.attribute.value': 'product.attribute.value',
+    'sale.order.line': 'sale.order.line',
+}
+
+_BULK_MAX = 1000  # pantalytics cap for bulk operations
 
 
 def _make_serializable(obj):
@@ -147,6 +168,28 @@ class ToolDispatcher:
                 result = self._dispatch_code_read(arguments, env, user)
             elif name == 'execute_orm':
                 result = self._dispatch_execute_orm(arguments, env, user)
+            elif name == 'post_message':
+                result = self._dispatch_post_message(arguments, env, user)
+            elif name == 'get_attachments':
+                result = self._dispatch_get_attachments(arguments, env, user)
+            elif name == 'read_attachment':
+                result = self._dispatch_read_attachment(arguments, env, user)
+            elif name == 'set_binary_field':
+                result = self._dispatch_set_binary_field(arguments, env, user)
+            elif name == 'upload_attachment':
+                result = self._dispatch_upload_attachment(arguments, env, user)
+            elif name == 'create_records':
+                result = self._dispatch_create_records(arguments, env, user)
+            elif name == 'update_records':
+                result = self._dispatch_update_records(arguments, env, user)
+            elif name == 'delete_records':
+                result = self._dispatch_delete_records(arguments, env, user)
+            elif name == 'lookup_model_history':
+                result = self._dispatch_lookup_model_history(arguments, env, user)
+            elif name == 'accounting_health_summary':
+                result = self._dispatch_accounting_health_summary(arguments, env, user)
+            elif name == 'import_from_file':
+                result = self._dispatch_import_from_file(arguments, env, user)
             elif name == 'create_echart':
                 result = self._dispatch_create_echart(arguments, env, user)
             elif name == 'ai_agent_query':
@@ -199,12 +242,15 @@ class ToolDispatcher:
         noise = {k: v for k, v in result.items() if any(k.startswith(p) for p in self._SCHEMA_NOISE_PREFIXES)}
         return {**primary, **noise}
 
+    _AUDIT_FIELDS = frozenset(['create_uid', 'write_uid', 'create_date', 'write_date', '__last_update'])
+
     def _dispatch_search_read(self, arguments, env, user):
         model_name = arguments['model']
         domain = _normalize_domain(arguments.get('domain', []))
         fields = arguments.get('fields', [])
         limit = min(arguments.get('limit', 10), 100)
         order = arguments.get('order')
+        explicit_fields = bool(fields)
 
         model = env[model_name].with_user(user)
         records = model.search_read(domain, fields, limit=limit, order=order)
@@ -218,6 +264,10 @@ class ToolDispatcher:
                 for bf in binary_fields:
                     if s.get(bf) is None:  # bytes were stripped by _make_serializable
                         s[bf] = f'/web/image/{model_name}/{rec_id}/{bf}'
+            # ponytail: strip audit noise when AI didn't specify fields — keeps responses clean
+            if not explicit_fields:
+                for af in self._AUDIT_FIELDS:
+                    s.pop(af, None)
             result.append(s)
         return result
 
@@ -300,9 +350,7 @@ class ToolDispatcher:
         query = arguments['query']
         path_filter = arguments.get('path_filter')
 
-        search_roots = [_MODULE_ROOT]
-        if _ODOO_ROOT and os.path.isdir(_ODOO_ROOT):
-            search_roots.append(_ODOO_ROOT)
+        search_roots = [_MODULE_ROOT] + [p for p in _ODOO_ADDONS_PATHS if os.path.isdir(p)]
 
         all_matches = []
         for root_path in search_roots:
@@ -353,17 +401,21 @@ class ToolDispatcher:
         start_line = arguments.get('start_line', 1)
         end_line = arguments.get('end_line', 100)
 
-        # Try custom module root first, then Odoo core root
-        allowed_roots = [_MODULE_ROOT]
-        if _ODOO_ROOT and os.path.isdir(_ODOO_ROOT):
-            allowed_roots.append(_ODOO_ROOT)
-
         target_path = None
-        for root in allowed_roots:
-            candidate = os.path.abspath(os.path.join(root, filepath))
-            if candidate.startswith(root) and os.path.exists(candidate):
-                target_path = candidate
-                break
+
+        # 1. Custom module root (e.g. mcp_gateway itself)
+        candidate = os.path.abspath(os.path.join(_MODULE_ROOT, filepath))
+        if candidate.startswith(_MODULE_ROOT) and os.path.exists(candidate):
+            target_path = candidate
+
+        # 2. Runtime addons paths — strip leading 'addons/' if present
+        if not target_path:
+            stripped = filepath[7:] if filepath.startswith('addons/') else filepath
+            for addons_dir in _ODOO_ADDONS_PATHS:
+                candidate = os.path.abspath(os.path.join(addons_dir, stripped))
+                if os.path.exists(candidate):
+                    target_path = candidate
+                    break
 
         if target_path is None:
             raise FileNotFoundError(f"File {filepath} not found.")
@@ -372,6 +424,255 @@ class ToolDispatcher:
             lines = f.readlines()
 
         return "".join(lines[start_line - 1 : end_line])
+
+    def _dispatch_post_message(self, arguments, env, user):
+        model = arguments['model']
+        record_id = int(arguments['record_id'])
+        body = arguments['body']
+        message_type = arguments.get('message_type', 'comment')
+        subtype_xmlid = 'mail.mt_note' if message_type == 'internal' else 'mail.mt_comment'
+        record = env[model].browse(record_id)
+        msg = record.message_post(body=body, message_type=message_type, subtype_xmlid=subtype_xmlid)
+        return {'message_id': msg.id, 'model': model, 'record_id': record_id}
+
+    def _dispatch_get_attachments(self, arguments, env, user):
+        model = arguments['model']
+        record_id = int(arguments['record_id'])
+        attachments = env['ir.attachment'].search_read(
+            [('res_model', '=', model), ('res_id', '=', record_id)],
+            ['id', 'name', 'mimetype', 'file_size', 'create_date']
+        )
+        for att in attachments:
+            att['url'] = f'/web/content/{att["id"]}?download=true'
+        return {'model': model, 'record_id': record_id, 'attachments': attachments, 'count': len(attachments)}
+
+    def _dispatch_upload_attachment(self, arguments, env, user):
+        att = env['ir.attachment'].create({
+            'name': arguments['filename'],
+            'res_model': arguments['model'],
+            'res_id': int(arguments['record_id']),
+            'mimetype': arguments.get('mimetype', 'application/octet-stream'),
+            'datas': arguments['datas'],
+        })
+        return {'id': att.id, 'name': att.name, 'model': arguments['model'], 'record_id': int(arguments['record_id'])}
+
+    _MAX_ATTACHMENT_BYTES = 1 * 1024 * 1024  # 1 MiB — same cap as tuanle96/mcp-odoo
+
+    def _dispatch_read_attachment(self, arguments, env, user):
+        att_id = int(arguments['attachment_id'])
+        include_data = arguments.get('include_data', True)
+        rows = env['ir.attachment'].search_read(
+            [('id', '=', att_id)],
+            ['id', 'name', 'mimetype', 'file_size', 'type', 'url', 'res_model', 'res_id']
+        )
+        if not rows:
+            raise ValueError(f'Attachment not found: {att_id}')
+        att = rows[0]
+        data_base64 = None
+        warnings = []
+        file_size = int(att.get('file_size') or 0)
+        if include_data and att.get('type') != 'url':
+            if file_size > self._MAX_ATTACHMENT_BYTES:
+                warnings.append(f'File is {file_size} bytes, over 1MB cap. Use the URL to download.')
+            else:
+                datas_rows = env['ir.attachment'].search_read([('id', '=', att_id)], ['datas'])
+                raw = datas_rows[0].get('datas') if datas_rows else None
+                if raw:
+                    data_base64 = raw
+        elif att.get('type') == 'url':
+            warnings.append('URL-type attachment — use the url field directly.')
+        att['url'] = f'/web/content/{att_id}?download=true'
+        return {
+            'attachment': att,
+            'data_base64': data_base64,
+            'data_included': data_base64 is not None,
+            'warnings': warnings,
+        }
+
+    def _dispatch_set_binary_field(self, arguments, env, user):
+        """pantalytics pattern: fetch from URL, write to binary/image field. Bytes never pass through LLM."""
+        model = arguments['model']
+        record_id = int(arguments['record_id'])
+        field_name = arguments['field_name']
+        source_url = arguments['source']
+
+        # pantalytics: auto-redirect avatar_* to image_1920
+        if _AVATAR_FIELD_RE.match(field_name):
+            field_name = 'image_1920'
+
+        field_meta = env[model].fields_get([field_name], ['type', 'readonly'])
+        if field_name not in field_meta:
+            raise ValueError(f'Field {field_name} not found on {model}')
+        if field_meta[field_name].get('type') not in ('binary', 'image'):
+            raise ValueError(f'Field {field_name} is not a binary/image field')
+        if field_meta[field_name].get('readonly'):
+            raise ValueError(f'Field {field_name} is readonly')
+
+        # pantalytics: 25MB cap, 64KB chunks
+        _MAX_BINARY = 25 * 1024 * 1024
+        chunks = []
+        total = 0
+        req = _urllib_req.Request(source_url, headers={'User-Agent': 'mcp-gateway/1.0'})
+        with _urllib_req.urlopen(req, timeout=30) as resp:
+            while True:
+                chunk = resp.read(65536)
+                if not chunk:
+                    break
+                total += len(chunk)
+                if total > _MAX_BINARY:
+                    raise ValueError('Source file exceeds 25MB limit')
+                chunks.append(chunk)
+
+        datas = base64.b64encode(b''.join(chunks)).decode('ascii')
+        env[model].browse(record_id).write({field_name: datas})
+        return {'model': model, 'record_id': record_id, 'field': field_name, 'size_bytes': total}
+
+    def _dispatch_create_records(self, arguments, env, user):
+        """pantalytics bulk create — multiple records in one call."""
+        model = arguments['model']
+        vals_list = arguments['vals_list']
+        if len(vals_list) > _BULK_MAX:
+            raise ValueError(f'vals_list exceeds limit of {_BULK_MAX}')
+        records = env[model].with_user(user).create(vals_list)
+        return {'model': model, 'ids': records.ids, 'count': len(records)}
+
+    def _dispatch_update_records(self, arguments, env, user):
+        """pantalytics bulk update — same values written to multiple records."""
+        model = arguments['model']
+        record_ids = arguments['record_ids']
+        values = arguments['values']
+        if len(record_ids) > _BULK_MAX:
+            raise ValueError(f'record_ids exceeds limit of {_BULK_MAX}')
+        env[model].with_user(user).browse(record_ids).write(values)
+        return {'model': model, 'record_ids': record_ids, 'count': len(record_ids)}
+
+    def _dispatch_delete_records(self, arguments, env, user):
+        """pantalytics bulk delete — multiple records unlinked in one call."""
+        model = arguments['model']
+        record_ids = arguments['record_ids']
+        if len(record_ids) > _BULK_MAX:
+            raise ValueError(f'record_ids exceeds limit of {_BULK_MAX}')
+        env[model].with_user(user).browse(record_ids).unlink()
+        return {'model': model, 'count': len(record_ids)}
+
+    def _dispatch_lookup_model_history(self, arguments, env, user):
+        """tuanle96 pattern: resolve outdated model names to current Odoo names."""
+        model = arguments['model']
+        if model in _MODEL_HISTORY:
+            current = _MODEL_HISTORY[model]
+            return {
+                'queried': model,
+                'current_name': current,
+                'renamed': current != model,
+                'note': f'Use "{current}" instead of "{model}"' if current != model else f'"{model}" is current',
+            }
+        exists = bool(env.registry.get(model))
+        return {
+            'queried': model,
+            'current_name': model if exists else None,
+            'renamed': False,
+            'exists': exists,
+            'note': 'Model exists and name is current' if exists else f'Model "{model}" not found — check spelling or use list_models.',
+        }
+
+    def _dispatch_accounting_health_summary(self, arguments, env, user):
+        """tuanle96 pattern: quick AR/AP health check without multiple tool calls."""
+        Move = env['account.move'].with_user(user)
+        today = date.today().isoformat()
+        ar = Move.search_read(
+            [('move_type', '=', 'out_invoice'), ('state', '=', 'posted'),
+             ('payment_state', 'not in', ['paid', 'reversed'])],
+            ['id', 'name', 'partner_id', 'amount_residual', 'invoice_date_due']
+        )
+        ap = Move.search_read(
+            [('move_type', '=', 'in_invoice'), ('state', '=', 'posted'),
+             ('payment_state', 'not in', ['paid', 'reversed'])],
+            ['id', 'name', 'partner_id', 'amount_residual', 'invoice_date_due']
+        )
+        draft = Move.search_count([('move_type', 'in', ('out_invoice', 'in_invoice')), ('state', '=', 'draft')])
+        ar_overdue = [r for r in ar if r.get('invoice_date_due') and r['invoice_date_due'] < today]
+        ap_overdue = [r for r in ap if r.get('invoice_date_due') and r['invoice_date_due'] < today]
+        return {
+            'receivables': {
+                'total_count': len(ar), 'overdue_count': len(ar_overdue),
+                'total_amount': sum(r['amount_residual'] for r in ar),
+                'overdue_amount': sum(r['amount_residual'] for r in ar_overdue),
+            },
+            'payables': {
+                'total_count': len(ap), 'overdue_count': len(ap_overdue),
+                'total_amount': sum(r['amount_residual'] for r in ap),
+                'overdue_amount': sum(r['amount_residual'] for r in ap_overdue),
+            },
+            'draft_invoice_backlog': draft,
+            'as_of': today,
+        }
+
+    def _dispatch_import_from_file(self, arguments, env, user):
+        """Parse a staged ir.attachment (CSV or Excel) and load rows into Odoo via env[model].load()."""
+        import base64 as _b64
+        import csv as _csv
+        import io as _io
+
+        attachment_id = int(arguments['attachment_id'])
+        model = arguments['model']
+        has_header = arguments.get('has_header', True)
+
+        rows = env['ir.attachment'].search_read(
+            [('id', '=', attachment_id)],
+            ['name', 'mimetype', 'datas', 'file_size']
+        )
+        if not rows:
+            raise ValueError(f'Attachment not found: {attachment_id}')
+        att = rows[0]
+        if not att.get('datas'):
+            raise ValueError('Attachment has no data')
+
+        raw = _b64.b64decode(att['datas'])
+        mimetype = (att.get('mimetype') or '').lower()
+        name = att.get('name', '')
+
+        if (mimetype in ('application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                         'application/vnd.ms-excel')
+                or name.lower().endswith(('.xlsx', '.xls'))):
+            import openpyxl
+            wb = openpyxl.load_workbook(filename=_io.BytesIO(raw), read_only=True, data_only=True)
+            ws = wb.active
+            all_rows = [
+                [str(cell.value) if cell.value is not None else '' for cell in row]
+                for row in ws.iter_rows()
+            ]
+            wb.close()
+        else:
+            text = raw.decode('utf-8-sig')  # utf-8-sig strips BOM
+            all_rows = list(_csv.reader(_io.StringIO(text)))
+
+        if not all_rows:
+            raise ValueError('File is empty')
+
+        if has_header:
+            fields = all_rows[0]
+            data = all_rows[1:]
+        else:
+            fields = [f'col{i}' for i in range(len(all_rows[0]))]
+            data = all_rows
+
+        if not data:
+            raise ValueError('File has no data rows (only a header row was found)')
+
+        result = env[model].with_user(user).load(fields, data)
+        ids = result.get('ids') or []
+        messages = result.get('messages') or []
+        errors = [m for m in messages if m.get('type') in ('error', 'warning')]
+
+        return {
+            'model': model,
+            'source_file': name,
+            'fields': fields,
+            'total_rows': len(data),
+            'created_count': len(ids),
+            'ids': ids[:100],
+            'errors': errors[:20],
+        }
 
     def _dispatch_execute_orm(self, arguments, env, user):
         code = arguments['code']
@@ -393,20 +694,18 @@ class ToolDispatcher:
             'Counter': Counter,
         }
         # Wrap in a function so multi-line code with assignments works.
-        # Auto-insert return before the last expression line (bare name or call).
+        # Use AST to find the last Expr statement and insert return at its start line.
+        import ast as _ast
         stripped = code.strip()
-        lines = stripped.splitlines()
-        last_idx = next((i for i in range(len(lines) - 1, -1, -1) if lines[i].strip()), -1)
-        if last_idx >= 0:
-            last = lines[last_idx].strip()
-            _stmt_kw = ('return ', 'raise ', 'pass', 'break', 'continue',
-                        'import ', 'from ', 'if ', 'else:', 'elif ', 'for ',
-                        'while ', 'with ', 'try:', 'except', 'def ', 'class ', '#')
-            _is_assign = bool(re.match(r'^[\w\s\[\].]+\s*[+\-*/%&|^]?=(?!=)', last))
-            if last and not any(last.startswith(k) for k in _stmt_kw) and not _is_assign:
-                indent = len(lines[last_idx]) - len(lines[last_idx].lstrip())
-                lines[last_idx] = ' ' * indent + 'return ' + last
-                stripped = '\n'.join(lines)
+        try:
+            _tree = _ast.parse(stripped)
+            if _tree.body and isinstance(_tree.body[-1], _ast.Expr):
+                _lines = stripped.splitlines()
+                _start = _tree.body[-1].lineno - 1  # 0-indexed, points to opening line
+                _lines[_start] = 'return ' + _lines[_start]
+                stripped = '\n'.join(_lines)
+        except SyntaxError:
+            pass  # safe_eval will surface the error
         indented = '\n'.join('    ' + line for line in stripped.splitlines())
         fn_code = f'def _orm_fn():\n{indented}\n'
         safe_eval(fn_code, eval_context, mode='exec', nocopy=True)

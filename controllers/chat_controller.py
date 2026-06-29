@@ -34,9 +34,25 @@ class ChatController(http.Controller):
     Provides endpoints for chat, agent/tool discovery, webhooks, and session export.
     """
 
+    @http.route('/mcp/attachment/stage', type='json', auth='user', methods=['POST'])
+    def stage_attachment(self, filename: str, mimetype: str, datas: str) -> dict:
+        """Stage a file upload before sending to AI. Creates a floating ir.attachment."""
+        try:
+            att = http.request.env['ir.attachment'].create({
+                'name': filename,
+                'mimetype': mimetype,
+                'datas': datas,
+                'type': 'binary',
+            })
+            return {'status': 'success', 'data': {'id': att.id, 'name': att.name, 'mimetype': mimetype}}
+        except Exception as e:
+            _logger.error('Failed to stage attachment: %s', str(e))
+            return {'status': 'error', 'error': str(e)}
+
     @http.route('/mcp/chat', type='json', auth='user', methods=['POST'])
     def chat(self, agent_id: int, message: str, session_id: int = None,
-             active_model: str = None, active_id: int = None) -> dict:
+             active_model: str = None, active_id: int = None,
+             staged_attachment_id: int = None) -> dict:
         """
         Chat endpoint — send message to agent and get reply.
 
@@ -71,6 +87,7 @@ class ChatController(http.Controller):
                 session_id=session_id,
                 active_model=active_model,
                 active_id=active_id,
+                staged_attachment_id=staged_attachment_id,
             )
 
             agent = http.request.env['mcp.agent'].browse(agent_id)
