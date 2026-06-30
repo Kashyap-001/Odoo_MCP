@@ -558,6 +558,11 @@ export class ChatWidget extends Component {
         return out.join('');
     }
 
+    // Render markdown content as safe markup — used by text type so **bold** and |tables| display correctly
+    _md(content) {
+        return markup(this._renderMarkdown(content || ''));
+    }
+
     _formatTableCell(cell, header) {
         const clean = cell.replace(/^\*\*|^\*|^\`|\*\*$|\*$|\`$/g, '').trim();
         const headerLower = header ? header.trim().toLowerCase() : '';
@@ -798,6 +803,17 @@ export class ChatWidget extends Component {
                 return { parsedContent: null, structuredData: parsed };
             }
             catch (e) { /* fallthrough */ }
+        }
+        const typeIdx = content.indexOf('{"_type":');
+        if (typeIdx > 0) {
+            try {
+                const parsed = JSON.parse(content.slice(typeIdx));
+                if (parsed._type) {
+                    if (parsed.company_currency_symbol)
+                        this.state.companyCurrencySymbol = parsed.company_currency_symbol;
+                    return { parsedContent: null, structuredData: parsed };
+                }
+            } catch (e) { /* fallthrough */ }
         }
         const m = content.match(/```(?:json)?\s*(\{[\s\S]*?\})\s*```/);
         if (m) {

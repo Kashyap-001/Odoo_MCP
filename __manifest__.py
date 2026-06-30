@@ -37,6 +37,7 @@ Requirements:
         'security/ir.model.access.csv',
         'security/mcp_record_rules.xml',
         'data/default_tools.xml',
+        'data/default_access_rules.xml',
         'data/mcp_cron.xml',
         'views/mcp_agent_views.xml',
         'views/mcp_tool_views.xml',

@@ -309,6 +309,15 @@ class ToolDispatcher:
     def _dispatch_create_record(self, arguments, env, user):
         model_name = arguments['model']
         values = arguments['values']
+        match_field = arguments.get('match_field')
+
+        if match_field and match_field in values:
+            existing = env[model_name].with_user(user).search(
+                [(match_field, '=', values[match_field])], limit=1
+            )
+            if existing:
+                return {'id': existing.id, 'model': model_name, 'skipped': True,
+                        'reason': f'{match_field}={values[match_field]!r} already exists'}
 
         processed_vals = self._prepare_create_values(values, model_name, env)
         if isinstance(processed_vals, dict) and 'error' in processed_vals:
@@ -538,12 +547,32 @@ class ToolDispatcher:
 
     def _dispatch_create_records(self, arguments, env, user):
         """pantalytics bulk create — multiple records in one call."""
-        model = arguments['model']
+        model_name = arguments['model']
         vals_list = arguments['vals_list']
+        match_field = arguments.get('match_field')
         if len(vals_list) > _BULK_MAX:
             raise ValueError(f'vals_list exceeds limit of {_BULK_MAX}')
-        records = env[model].with_user(user).create(vals_list)
-        return {'model': model, 'ids': records.ids, 'count': len(records)}
+
+        model = env[model_name].with_user(user)
+        if match_field:
+            match_values = [v[match_field] for v in vals_list if match_field in v]
+            existing = {
+                r[match_field]: r['id']
+                for r in model.search_read([(match_field, 'in', match_values)], [match_field])
+            } if match_values else {}
+            to_create, skipped_ids = [], []
+            for vals in vals_list:
+                key = vals.get(match_field)
+                if key and key in existing:
+                    skipped_ids.append(existing[key])
+                else:
+                    to_create.append(vals)
+            new_ids = model.create(to_create).ids if to_create else []
+            return {'model': model_name, 'ids': new_ids, 'skipped_ids': skipped_ids,
+                    'count': len(new_ids), 'skipped_count': len(skipped_ids)}
+
+        records = model.create(vals_list)
+        return {'model': model_name, 'ids': records.ids, 'count': len(records)}
 
     def _dispatch_update_records(self, arguments, env, user):
         """pantalytics bulk update — same values written to multiple records."""
@@ -625,6 +654,7 @@ class ToolDispatcher:
         attachment_id = int(arguments['attachment_id'])
         model = arguments['model']
         has_header = arguments.get('has_header', True)
+        match_field = arguments.get('match_field')
 
         rows = env['ir.attachment'].search_read(
             [('id', '=', attachment_id)],
@@ -668,6 +698,20 @@ class ToolDispatcher:
         if not data:
             raise ValueError('File has no data rows (only a header row was found)')
 
+        skipped_count = 0
+        if match_field and match_field in fields:
+            col_idx = fields.index(match_field)
+            match_values = [row[col_idx] for row in data if len(row) > col_idx and row[col_idx]]
+            existing_vals = {
+                r[match_field]
+                for r in env[model].with_user(user).search_read(
+                    [(match_field, 'in', match_values)], [match_field]
+                )
+            } if match_values else set()
+            filtered = [row for row in data if not (len(row) > col_idx and row[col_idx] in existing_vals)]
+            skipped_count = len(data) - len(filtered)
+            data = filtered
+
         result = env[model].with_user(user).load(fields, data)
         ids = result.get('ids') or []
         messages = result.get('messages') or []
@@ -677,8 +721,9 @@ class ToolDispatcher:
             'model': model,
             'source_file': name,
             'fields': fields,
-            'total_rows': len(data),
+            'total_rows': len(data) + skipped_count,
             'created_count': len(ids),
+            'skipped_count': skipped_count,
             'ids': ids[:100],
             'errors': errors[:20],
         }
@@ -935,6 +980,10 @@ class ToolDispatcher:
         model = env.get(model_name)
         if model is None:
             return {'error': f'Model {model_name} not found'}
+
+        # ponytail: remap known Odoo version field renames before validation
+        _FIELD_RENAMES = {'detailed_type': 'type'}
+        arguments = {_FIELD_RENAMES.get(k, k): v for k, v in arguments.items()}
 
         for key, value in arguments.items():
             if value is None:

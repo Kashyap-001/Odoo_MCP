@@ -103,53 +103,85 @@
 
     <!-- ==================== MENU ITEMS ==================== -->
 
-    <!-- Root menu - AI Gateway -->
-    <menuitem id="menu_mcp_root" name="AI Gateway" sequence="100"/>
+    <!-- Root menu - AI Gateway (requires at least group_mcp_user) -->
+    <menuitem id="menu_mcp_root" name="AI Gateway" sequence="100"
+              groups="mcp_gateway.group_mcp_user"/>
 
-    <!-- Agents menu item -->
-    <menuitem id="menu_mcp_agents" name="Agents" action="action_mcp_agent" parent="menu_mcp_root" sequence="5"/>
+    <!-- Agents menu item (manager+) -->
+    <menuitem id="menu_mcp_agents" name="Agents" action="action_mcp_agent"
+              parent="menu_mcp_root" sequence="5"
+              groups="mcp_gateway.group_mcp_manager"/>
 
-    <!-- Chat menu item (OWL Widget) -->
-    <menuitem id="menu_mcp_chat" name="Chat" action="action_mcp_chat_widget" parent="menu_mcp_root" sequence="10"/>
+    <!-- Chat menu item (user+) -->
+    <menuitem id="menu_mcp_chat" name="Chat" action="action_mcp_chat_widget"
+              parent="menu_mcp_root" sequence="10"
+              groups="mcp_gateway.group_mcp_user"/>
 
-    <!-- Tools submenu -->
-    <menuitem id="menu_mcp_tools" name="Tools" parent="menu_mcp_root" sequence="20"/>
+    <!-- Tools submenu (manager+) -->
+    <menuitem id="menu_mcp_tools" name="Tools" parent="menu_mcp_root" sequence="20"
+              groups="mcp_gateway.group_mcp_manager"/>
 
-    <!-- Tools list -->
-    <menuitem id="menu_mcp_tool_list" name="Tools" action="action_mcp_tool" parent="menu_mcp_tools" sequence="10"/>
+    <!-- Tools list (manager+) -->
+    <menuitem id="menu_mcp_tool_list" name="Tools" action="action_mcp_tool"
+              parent="menu_mcp_tools" sequence="10"
+              groups="mcp_gateway.group_mcp_manager"/>
 
-    <!-- External MCP Servers -->
-    <menuitem id="menu_mcp_external_servers" name="External MCP Servers" action="action_mcp_external_server" parent="menu_mcp_tools" sequence="15"/>
+    <!-- External MCP Servers (admin only) -->
+    <menuitem id="menu_mcp_external_servers" name="External MCP Servers"
+              action="action_mcp_external_server" parent="menu_mcp_tools" sequence="15"
+              groups="mcp_gateway.group_mcp_admin"/>
 
-    <!-- Categories -->
-    <menuitem id="menu_mcp_tool_category_list" name="Categories" action="action_mcp_tool_category" parent="menu_mcp_tools" sequence="20"/>
+    <!-- Categories (manager+) -->
+    <menuitem id="menu_mcp_tool_category_list" name="Categories"
+              action="action_mcp_tool_category" parent="menu_mcp_tools" sequence="20"
+              groups="mcp_gateway.group_mcp_manager"/>
 
-    <!-- Tool Sets -->
-    <menuitem id="menu_mcp_tool_set_list" name="Tool Sets" action="action_mcp_tool_set" parent="menu_mcp_tools" sequence="30"/>
+    <!-- Tool Sets (manager+) -->
+    <menuitem id="menu_mcp_tool_set_list" name="Tool Sets" action="action_mcp_tool_set"
+              parent="menu_mcp_tools" sequence="30"
+              groups="mcp_gateway.group_mcp_manager"/>
 
-    <!-- Scan Tools -->
-    <menuitem id="menu_mcp_tool_scan" name="Scan Tools" action="action_mcp_tool_scan" parent="menu_mcp_tools" sequence="40"/>
+    <!-- Scan Tools (admin only) -->
+    <menuitem id="menu_mcp_tool_scan" name="Scan Tools" action="action_mcp_tool_scan"
+              parent="menu_mcp_tools" sequence="40"
+              groups="mcp_gateway.group_mcp_admin"/>
 
-    <!-- Sessions menu item -->
-    <menuitem id="menu_mcp_sessions" name="Sessions" action="action_mcp_session" parent="menu_mcp_root" sequence="30"/>
+    <!-- Sessions menu item (manager+) -->
+    <menuitem id="menu_mcp_sessions" name="Sessions" action="action_mcp_session"
+              parent="menu_mcp_root" sequence="30"
+              groups="mcp_gateway.group_mcp_manager"/>
 
-    <!-- Cost Analysis menu item -->
-    <menuitem id="menu_mcp_cost" name="Cost Analysis" action="action_mcp_cost_entry" parent="menu_mcp_root" sequence="40"/>
+    <!-- Cost Analysis menu item (manager+) -->
+    <menuitem id="menu_mcp_cost" name="Cost Analysis" action="action_mcp_cost_entry"
+              parent="menu_mcp_root" sequence="40"
+              groups="mcp_gateway.group_mcp_manager"/>
 
-    <!-- Configuration submenu -->
-    <menuitem id="menu_mcp_configuration" name="Configuration" parent="menu_mcp_root" sequence="100"/>
+    <!-- Configuration submenu (admin only) -->
+    <menuitem id="menu_mcp_configuration" name="Configuration" parent="menu_mcp_root"
+              sequence="100" groups="mcp_gateway.group_mcp_admin"/>
 
-    <!-- Access Rules -->
-    <menuitem id="menu_mcp_access_rules" name="Access Rules" action="action_mcp_access_rule" parent="menu_mcp_configuration" sequence="10"/>
+    <!-- Access Rules (admin only) -->
+    <menuitem id="menu_mcp_access_rules" name="Access Rules" action="action_mcp_access_rule"
+              parent="menu_mcp_configuration" sequence="10"
+              groups="mcp_gateway.group_mcp_admin"/>
 
-    <!-- Prompt Templates -->
-    <menuitem id="menu_mcp_prompt_templates" name="Prompt Templates" action="action_mcp_prompt_template" parent="menu_mcp_configuration" sequence="20"/>
+    <!-- Prompt Templates (admin only) -->
+    <menuitem id="menu_mcp_prompt_templates" name="Prompt Templates"
+              action="action_mcp_prompt_template" parent="menu_mcp_configuration" sequence="20"
+              groups="mcp_gateway.group_mcp_admin"/>
 
-    <!-- Webhook Triggers -->
-    <menuitem id="menu_mcp_webhook_triggers" name="Webhook Triggers" action="action_mcp_webhook_trigger" parent="menu_mcp_configuration" sequence="30"/>
+    <!-- Webhook Triggers (admin only) -->
+    <menuitem id="menu_mcp_webhook_triggers" name="Webhook Triggers"
+              action="action_mcp_webhook_trigger" parent="menu_mcp_configuration" sequence="30"
+              groups="mcp_gateway.group_mcp_admin"/>
 
-    <!-- Issues (separate submenu) -->
-    <menuitem id="menu_mcp_issues" name="Issues" parent="menu_mcp_root" sequence="50"/>
-    <menuitem id="menu_mcp_issue_list" name="Issues" action="action_mcp_issue" parent="menu_mcp_issues" sequence="10"/>
-    <menuitem id="menu_mcp_issue_tags" name="Tags" action="action_mcp_issue_tag" parent="menu_mcp_issues" sequence="20"/>
+    <!-- Issues (manager+) -->
+    <menuitem id="menu_mcp_issues" name="Issues" parent="menu_mcp_root" sequence="50"
+              groups="mcp_gateway.group_mcp_manager"/>
+    <menuitem id="menu_mcp_issue_list" name="Issues" action="action_mcp_issue"
+              parent="menu_mcp_issues" sequence="10"
+              groups="mcp_gateway.group_mcp_manager"/>
+    <menuitem id="menu_mcp_issue_tags" name="Tags" action="action_mcp_issue_tag"
+              parent="menu_mcp_issues" sequence="20"
+              groups="mcp_gateway.group_mcp_manager"/>
 </odoo>

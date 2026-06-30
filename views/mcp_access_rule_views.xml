@@ -1,52 +1,117 @@
 <?xml version="1.0" encoding="utf-8"?>
 <odoo>
-    <!-- Tree View - List of all access rules -->
+    <!-- Search View -->
+    <record id="view_mcp_access_rule_search" model="ir.ui.view">
+        <field name="name">mcp.access.rule.search</field>
+        <field name="model">mcp.access.rule</field>
+        <field name="arch" type="xml">
+            <search string="Search Access Rules">
+                <field name="name"/>
+                <field name="group_ids" string="Group"/>
+                <field name="user_ids" string="User"/>
+                <field name="tool_ids" string="Tool"/>
+                <filter name="active" string="Active" domain="[('active','=',True)]"/>
+                <filter name="inactive" string="Archived" domain="[('active','=',False)]"/>
+                <group expand="0" string="Group By">
+                    <filter name="group_by_group" string="By Group" context="{'group_by': 'group_ids'}"/>
+                </group>
+            </search>
+        </field>
+    </record>
+
+    <!-- List View -->
     <record id="view_mcp_access_rule_tree" model="ir.ui.view">
         <field name="name">mcp.access.rule.tree</field>
         <field name="model">mcp.access.rule</field>
         <field name="arch" type="xml">
-            <list string="Access Rules">
-                <field name="name" />
-                <field name="group_ids" />
-                <field name="agent_ids" widget="many2many_tags" />
-                <field name="tool_ids" widget="many2many_tags" />
-                <field name="rate_limit_day" />
+            <list string="Access Rules" multi_edit="1">
+                <field name="sequence" widget="handle"/>
+                <field name="name"/>
+                <field name="group_ids" widget="many2many_tags"/>
+                <field name="user_ids" widget="many2many_tags" optional="show"/>
+                <field name="agent_ids" widget="many2many_tags" optional="hide"/>
+                <field name="tool_ids" widget="many2many_tags" optional="hide"/>
+                <field name="rate_limit_day" string="Daily Limit" optional="show"/>
+                <field name="rate_limit_month" string="Monthly Limit" optional="hide"/>
+                <field name="active" optional="show"/>
             </list>
         </field>
     </record>
 
-    <!-- Form View - Create/Edit access rule -->
+    <!-- Form View -->
     <record id="view_mcp_access_rule_form" model="ir.ui.view">
         <field name="name">mcp.access.rule.form</field>
         <field name="model">mcp.access.rule</field>
         <field name="arch" type="xml">
             <form string="Access Rule">
                 <sheet>
-                    <!-- Basic info -->
+                    <widget name="web_ribbon" title="Archived" bg_color="bg-danger"
+                            invisible="active"/>
                     <group>
-                        <field name="name" required="1" />
-                        <field name="group_ids" required="1" />
-                    </group>
-
-                    <!-- Permissions section -->
-                    <group string="Permissions">
                         <group>
-                            <field name="can_view_sessions" />
-                            <field name="can_export" />
+                            <field name="name" required="1"/>
+                            <field name="sequence"/>
+                        </group>
+                        <group>
+                            <field name="active"/>
                         </group>
                     </group>
 
-                    <!-- Rate limiting section -->
-                    <group string="Rate Limiting">
-                        <group>
-                            <field name="rate_limit_day" />
-                            <field name="rate_limit_month" />
-                        </group>
-                    </group>
+                    <notebook>
+                        <!-- Page 1: Who has this rule -->
+                        <page string="Who" name="who">
+                            <group>
+                                <group string="Groups">
+                                    <field name="group_ids" widget="many2many_tags"
+                                           nolabel="1" colspan="2"
+                                           help="All users in these groups inherit this rule"/>
+                                </group>
+                                <group string="Individual Users">
+                                    <field name="user_ids" widget="many2many_tags"
+                                           nolabel="1" colspan="2"
+                                           help="Grant access to specific users regardless of group"/>
+                                </group>
+                            </group>
+                        </page>
 
-                    <!-- Accessible agents and tools -->
-                    <field name="agent_ids" widget="many2many_tags" nolabel="1" colspan="2" string="Accessible Agents" />
-                    <field name="tool_ids" widget="many2many" nolabel="1" colspan="2" string="Accessible Tools" />
+                        <!-- Page 2: What they can access -->
+                        <page string="What" name="what">
+                            <group string="Agents">
+                                <field name="agent_ids" widget="many2many_tags"
+                                       nolabel="1" colspan="2"
+                                       help="Leave empty to allow access to all agents"/>
+                            </group>
+                            <group string="Tools">
+                                <p class="text-muted" colspan="2" invisible="tool_ids">
+                                    No tools selected — all tools are allowed for users matched by this rule.
+                                </p>
+                                <field name="tool_ids" nolabel="1" colspan="2"
+                                       help="Leave empty to allow all tools; select specific tools to restrict access">
+                                    <list>
+                                        <field name="display_name_label" string="Tool"/>
+                                        <field name="category_id"/>
+                                        <field name="is_readonly" string="Read-only"/>
+                                        <field name="requires_confirm" string="Confirm"/>
+                                        <field name="active" optional="hide"/>
+                                    </list>
+                                </field>
+                            </group>
+                        </page>
+
+                        <!-- Page 3: Permissions and rate limits -->
+                        <page string="Permissions &amp; Limits" name="permissions">
+                            <group string="Permissions">
+                                <field name="can_view_sessions"/>
+                                <field name="can_export"/>
+                            </group>
+                            <group string="Rate Limiting">
+                                <field name="rate_limit_day"
+                                       help="Max chat sessions per 24 hours. 0 = unlimited."/>
+                                <field name="rate_limit_month"
+                                       help="Max chat sessions per 30 days. 0 = unlimited."/>
+                            </group>
+                        </page>
+                    </notebook>
                 </sheet>
             </form>
         </field>

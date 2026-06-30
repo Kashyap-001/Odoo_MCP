@@ -119,7 +119,7 @@
         <record id="tool_read_group" model="mcp.tool">
             <field name="name">read_group</field>
             <field name="display_name_label">Aggregate Records (Group By)</field>
-            <field name="description">Aggregate and group database records for statistics and reports. Use when the user asks: "total sales by month", "count orders per customer", "sum revenue by product", "how much in total", "group by", "breakdown of", "average", "statistics". Never calculate aggregates manually from raw records — use this tool. Call directly without schema lookup — you know the field names for standard Odoo models.</field>
+            <field name="description">Aggregate and group database records for statistics and reports. Use when the user asks: "total sales by month", "count orders per customer", "sum revenue by product", "how much in total", "group by", "breakdown of", "average", "statistics". Never calculate aggregates manually from raw records — use this tool. NEVER guess field names — call get_model_schema first if unsure which fields exist on the model.</field>
             <field name="category_id" ref="category_read"/>
             <field name="tool_type">odoo</field>
             <field name="odoo_model">ir.model</field>
@@ -148,7 +148,7 @@
         <record id="tool_create_record" model="mcp.tool">
             <field name="name">create_record</field>
             <field name="display_name_label">Create Record</field>
-            <field name="description">Create a new record in Odoo. Use when the user says: "create a", "add a new", "make a new", "register a", "insert a". Examples: create a customer, create a sale order, add a new product. You know the required fields for common models — call this directly without schema lookup.</field>
+            <field name="description">Create a new record in Odoo. Use when the user says: "create a", "add a new", "make a new", "register a", "insert a". NEVER guess field names — always call get_model_schema first. Common Odoo 18 rename: product.template uses `type` (consu, service, combo) NOT `detailed_type`. Use match_field to prevent duplicates: if a record with that field value already exists, the create is skipped and the existing ID is returned (e.g. match_field="default_code" for products).</field>
             <field name="category_id" ref="category_write"/>
             <field name="tool_type">odoo</field>
             <field name="odoo_model">ir.model</field>
@@ -159,7 +159,8 @@
   "type": "object",
   "properties": {
     "model": {"type": "string", "description": "Technical model name (e.g. \"sale.order\")"},
-    "values": {"type": "object", "description": "Key-value dictionary mapping fields to create values"}
+    "values": {"type": "object", "description": "Key-value dictionary mapping fields to create values"},
+    "match_field": {"type": "string", "description": "Optional field to deduplicate on (e.g. 'default_code'). If a record with this value already exists, create is skipped and existing ID returned."}
   },
   "required": ["model", "values"]
 }</field>
@@ -169,7 +170,7 @@
         <record id="tool_update_record" model="mcp.tool">
             <field name="name">update_record</field>
             <field name="display_name_label">Update Record(s)</field>
-            <field name="description">Update fields on one or more existing records. Use when the user says: "update", "change", "set the", "modify", "edit record", "rename". Always use search_read first to get the record IDs before updating.</field>
+            <field name="description">Update fields on one or more existing records. Use when the user says: "update", "change", "set the", "modify", "edit record", "rename". Always use search_read first to get the record IDs before updating. NEVER guess field names — call get_model_schema first if unsure.</field>
             <field name="category_id" ref="category_write"/>
             <field name="tool_type">odoo</field>
             <field name="odoo_model">ir.model</field>
@@ -414,7 +415,7 @@
         <record id="tool_create_records" model="mcp.tool">
             <field name="name">create_records</field>
             <field name="display_name_label">Bulk Create Records</field>
-            <field name="description">Create multiple records in a single operation (max 1000). Use when user says: "create multiple", "bulk create", "add these N records", "import a list of". More efficient than calling create_record N times. Parameters: model, vals_list (array of value dicts).</field>
+            <field name="description">Create multiple records in a single operation (max 1000). Use when user says: "create multiple", "bulk create", "add these N records", "import a list of". More efficient than calling create_record N times. NEVER guess field names — call get_model_schema first. Use match_field to prevent duplicates: all rows are checked in ONE database query, existing records are skipped, only new ones are created (e.g. match_field="default_code" for products).</field>
             <field name="category_id" ref="category_write"/>
             <field name="tool_type">odoo</field>
             <field name="odoo_method">create_records</field>
@@ -424,17 +425,18 @@
   "type": "object",
   "properties": {
     "model": {"type": "string"},
-    "vals_list": {"type": "array", "items": {"type": "object"}, "description": "Array of value dicts, one per record"}
+    "vals_list": {"type": "array", "items": {"type": "object"}, "description": "Array of value dicts, one per record"},
+    "match_field": {"type": "string", "description": "Optional field to deduplicate on. All match values are checked in one DB query. Existing records are skipped, new ones are created."}
   },
   "required": ["model", "vals_list"]
 }</field>
-            <field name="output_sample">{"model": "res.partner", "ids": [10, 11, 12], "count": 3}</field>
+            <field name="output_sample">{"model": "res.partner", "ids": [10, 11, 12], "count": 3, "skipped_ids": [], "skipped_count": 0}</field>
         </record>
 
         <record id="tool_update_records" model="mcp.tool">
             <field name="name">update_records</field>
             <field name="display_name_label">Bulk Update Records</field>
-            <field name="description">Update multiple records with the same values in a single operation (max 1000). Use when user says: "update all", "set field X on these records", "bulk update", "change status of all". Parameters: model, record_ids (array of IDs), values (dict of field→value).</field>
+            <field name="description">Update multiple records with the same values in a single operation (max 1000). Use when user says: "update all", "set field X on these records", "bulk update", "change status of all". NEVER guess field names — call get_model_schema first if unsure. Parameters: model, record_ids (array of IDs), values (dict of field→value).</field>
             <field name="category_id" ref="category_write"/>
             <field name="tool_type">odoo</field>
             <field name="odoo_method">update_records</field>
@@ -507,7 +509,7 @@
         <record id="tool_import_from_file" model="mcp.tool">
             <field name="name">import_from_file</field>
             <field name="display_name_label">Import Records from File</field>
-            <field name="description">Import records from a CSV or Excel file that was uploaded via the paperclip button. Use when user uploads a file and says: "import this", "create records from this file", "load products from Excel", "bulk import from spreadsheet". The file must be uploaded first (use the paperclip). Parameters: attachment_id (from the staged file), model (Odoo model to import into), has_header (true if first row = field names, default true). First row must be Odoo field names (e.g. name, email, phone for res.partner).</field>
+            <field name="description">Import records from a CSV or Excel file that was uploaded via the paperclip button. Use when user uploads a file and says: "import this", "create records from this file", "load products from Excel", "bulk import from spreadsheet". The file must be uploaded first (use the paperclip). IMPORTANT: Call get_model_schema first to verify field names. Always use match_field to prevent duplicates — e.g. match_field="default_code" for products, match_field="email" for contacts. Rows matching an existing record are skipped; only new rows are imported.</field>
             <field name="category_id" ref="category_write"/>
             <field name="tool_type">odoo</field>
             <field name="odoo_method">import_from_file</field>
@@ -518,11 +520,12 @@
   "properties": {
     "attachment_id": {"type": "integer", "description": "ID of the staged ir.attachment (from the uploaded file)"},
     "model": {"type": "string", "description": "Odoo model to import into (e.g. res.partner, product.template)"},
-    "has_header": {"type": "boolean", "description": "Whether first row is field names (default: true)", "default": true}
+    "has_header": {"type": "boolean", "description": "Whether first row is field names (default: true)", "default": true},
+    "match_field": {"type": "string", "description": "Field to deduplicate on (e.g. 'default_code' for products, 'email' for contacts). Rows where a record with this value already exists are skipped."}
   },
   "required": ["attachment_id", "model"]
 }</field>
-            <field name="output_sample">{"model": "res.partner", "source_file": "contacts.xlsx", "fields": ["name", "email", "phone"], "total_rows": 50, "created_count": 50, "ids": [1, 2, 3], "errors": []}</field>
+            <field name="output_sample">{"model": "res.partner", "source_file": "contacts.xlsx", "fields": ["name", "email", "phone"], "total_rows": 50, "created_count": 48, "skipped_count": 2, "ids": [1, 2, 3], "errors": []}</field>
         </record>
 
         <record id="tool_create_echart" model="mcp.tool">

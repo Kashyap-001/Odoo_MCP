@@ -10,6 +10,14 @@
             <field name="domain_force">[('user_id', '=', user.id)]</field>
         </record>
 
+        <!-- Record rule: Manager users can read all sessions -->
+        <record id="mcp_session_manager_rule" model="ir.rule">
+            <field name="name">Manager can read all sessions</field>
+            <field name="model_id" ref="model_mcp_session"/>
+            <field name="groups" eval="[(4, ref('mcp_gateway.group_mcp_manager'))]"/>
+            <field name="domain_force">[(1, '=', 1)]</field>
+        </record>
+
         <!-- Record rule: Admin users can read all sessions -->
         <record id="mcp_session_admin_rule" model="ir.rule">
             <field name="name">Admin can read all sessions</field>
@@ -24,6 +32,14 @@
             <field name="model_id" ref="model_mcp_session_message"/>
             <field name="groups" eval="[(4, ref('base.group_user'))]"/>
             <field name="domain_force">[('session_id.user_id', '=', user.id)]</field>
+        </record>
+
+        <!-- Record rule: Manager users can read all session messages -->
+        <record id="mcp_session_message_manager_rule" model="ir.rule">
+            <field name="name">Manager can read all session messages</field>
+            <field name="model_id" ref="model_mcp_session_message"/>
+            <field name="groups" eval="[(4, ref('mcp_gateway.group_mcp_manager'))]"/>
+            <field name="domain_force">[(1, '=', 1)]</field>
         </record>
 
         <!-- Record rule: Admin users can read all session messages -->

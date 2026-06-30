@@ -280,14 +280,20 @@
                 </div>
             </t>
             <t t-elif="message.structuredData._type === 'text'">
-                <p class="mb-0" style="white-space: pre-wrap;"><t t-esc="message.structuredData.content"/></p>
+                <t t-if="message.structuredData.title">
+                    <div class="mcp-ai-response-title"><t t-esc="message.structuredData.title"/></div>
+                </t>
+                <div class="mcp-ai-text"><t t-out="this._md(message.structuredData.content)"/></div>
             </t>
             <t t-elif="message.structuredData._type === 'table'">
                 <t t-if="message.structuredData.title">
                     <div class="mcp-ai-response-title"><t t-esc="message.structuredData.title"/></div>
                 </t>
+                <t t-if="message.structuredData.subtitle">
+                    <div class="mcp-ai-response-subtitle"><t t-esc="message.structuredData.subtitle"/></div>
+                </t>
                 <div class="mcp-result-scroll">
-                    <table class="table table-sm table-bordered mcp-result-table">
+                    <table class="table table-sm table-bordered mcp-result-table mb-0">
                         <thead><tr>
                             <t t-foreach="message.structuredData.headers || []" t-as="h" t-key="h_index">
                                 <th><t t-esc="h"/></th>
@@ -309,16 +315,51 @@
                 <t t-if="message.structuredData.title">
                     <div class="mcp-ai-response-title"><t t-esc="message.structuredData.title"/></div>
                 </t>
-                <table class="table table-sm mcp-result-table">
+                <t t-if="message.structuredData.subtitle">
+                    <div class="mcp-ai-response-subtitle"><t t-esc="message.structuredData.subtitle"/></div>
+                </t>
+                <table class="table table-sm mcp-result-table mb-0">
                     <tbody>
                         <t t-foreach="Object.entries(message.structuredData.data || {})" t-as="entry" t-key="entry[0]">
                             <tr>
-                                <td class="fw-bold text-muted" style="width:38%"><t t-esc="entry[0]"/></td>
-                                <td><t t-out="this._formatCellValue(entry[1], entry[0], message.structuredData.data)"/></td>
+                                <td class="mcp-ai-fields-label"><t t-esc="entry[0]"/></td>
+                                <td class="mcp-ai-fields-value"><t t-out="this._formatCellValue(entry[1], entry[0], message.structuredData.data)"/></td>
                             </tr>
                         </t>
                     </tbody>
                 </table>
+            </t>
+            <t t-elif="message.structuredData._type === 'stats'">
+                <t t-if="message.structuredData.title">
+                    <div class="mcp-ai-response-title"><t t-esc="message.structuredData.title"/></div>
+                </t>
+                <div class="mcp-ai-stats-grid">
+                    <t t-foreach="message.structuredData.items || []" t-as="stat" t-key="stat_index">
+                        <div t-attf-class="mcp-ai-stat-box mcp-ai-stat-{{ stat.color || 'primary' }}">
+                            <div class="mcp-ai-stat-value"><t t-esc="stat.value"/></div>
+                            <div class="mcp-ai-stat-label"><t t-esc="stat.label"/></div>
+                        </div>
+                    </t>
+                </div>
+            </t>
+            <t t-elif="message.structuredData._type === 'list'">
+                <t t-if="message.structuredData.title">
+                    <div class="mcp-ai-response-title"><t t-esc="message.structuredData.title"/></div>
+                </t>
+                <t t-if="message.structuredData.ordered">
+                    <ol class="mcp-ai-list ps-3 mb-0">
+                        <t t-foreach="message.structuredData.items || []" t-as="item" t-key="item_index">
+                            <li><t t-esc="item"/></li>
+                        </t>
+                    </ol>
+                </t>
+                <t t-else="">
+                    <ul class="mcp-ai-list ps-3 mb-0">
+                        <t t-foreach="message.structuredData.items || []" t-as="item" t-key="item_index">
+                            <li><t t-esc="item"/></li>
+                        </t>
+                    </ul>
+                </t>
             </t>
             <t t-elif="message.structuredData._type === 'html'">
                 <div class="mcp-ai-html"><t t-out="message.structuredData.content"/></div>
@@ -377,9 +418,7 @@
                 </t>
             </t>
             <t t-else="">
-                <p class="mb-0 text-muted small" style="font-family: monospace; white-space: pre-wrap;">
-                    <t t-esc="this.stringify(message.structuredData)"/>
-                </p>
+                <div class="mcp-ai-text"><t t-out="this._md(message.structuredData.content || this.stringify(message.structuredData))"/></div>
             </t>
         </div>
     </t>

@@ -414,7 +414,7 @@
   height: 32px;
   border-radius: 50%;
   background: var(--mcp-primary);
-  color: var(--mcp-user-bubble-text, #11111b);
+  color: var(--mcp-user-bubble-text, #ffffff);
   border: none;
   display: flex;
   align-items: center;
@@ -465,9 +465,24 @@
   margin-bottom: 0;
 }
 
+/* bg-light badges keep their explicit text-* class; all other colored badges get white text */
+.mcp-chat-layout .badge:not([class*="text-"]) {
+  color: #fff !important;
+}
+
+.mcp-result-table thead th {
+  background: var(--mcp-ai-accent, #714B67) !important;
+  color: #fff !important;
+  font-weight: 600;
+  border-color: rgba(255,255,255,0.2);
+  white-space: nowrap;
+}
+
 .mcp-result-scroll {
   max-height: 320px;
   overflow-y: auto;
+  border-radius: 0.375rem;
+  border: 1px solid #e2e8f0;
 }
 
 .mcp-code-snippet {
@@ -654,9 +669,38 @@ h5.mcp-md-h { font-size: 0.9rem; }
 
 .mcp-ai-response-title {
   font-weight: 700;
-  color: #374151;
-  margin-bottom: 0.5rem;
+  color: var(--mcp-ai-accent, #714B67);
+  margin-bottom: 0.35rem;
   font-size: 0.875rem;
+}
+
+.mcp-ai-response-subtitle {
+  color: #6b7280;
+  font-size: 0.78rem;
+  margin-bottom: 0.5rem;
+}
+
+.mcp-ai-text {
+  line-height: 1.65;
+  margin: 0;
+}
+
+.mcp-ai-text p:last-child { margin-bottom: 0; }
+
+.mcp-ai-fields-label {
+  color: #6b7280;
+  font-weight: 600;
+  font-size: 0.78rem;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  background: #f8fafc;
+  width: 38%;
+  vertical-align: top;
+  padding-top: 0.45rem !important;
+}
+
+.mcp-ai-fields-value {
+  vertical-align: top;
 }
 
 .mcp-ai-html {
@@ -687,6 +731,46 @@ h5.mcp-md-h { font-size: 0.9rem; }
   margin-top: 0.5rem;
 }
 
+.mcp-ai-stats-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-top: 0.25rem;
+}
+
+.mcp-ai-stat-box {
+  flex: 1 1 120px;
+  padding: 0.6rem 0.75rem;
+  border-radius: 0.5rem;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+}
+
+.mcp-ai-stat-value {
+  font-size: 1.4rem;
+  font-weight: 700;
+  line-height: 1.2;
+}
+
+.mcp-ai-stat-label {
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #6b7280;
+  margin-top: 0.1rem;
+}
+
+.mcp-ai-stat-primary .mcp-ai-stat-value { color: var(--mcp-ai-accent, #714B67); }
+.mcp-ai-stat-success .mcp-ai-stat-value { color: #16a34a; }
+.mcp-ai-stat-danger  .mcp-ai-stat-value { color: #dc2626; }
+.mcp-ai-stat-warning .mcp-ai-stat-value { color: #d97706; }
+.mcp-ai-stat-muted   .mcp-ai-stat-value { color: #6b7280; }
+
+.mcp-ai-list {
+  font-size: 0.875rem;
+  line-height: 1.7;
+}
+
 .mcp-ai-cards-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
@@ -700,6 +784,12 @@ h5.mcp-md-h { font-size: 0.9rem; }
   border: 1px solid var(--mcp-border-color);
   border-radius: 0.5rem;
   font-size: 0.8rem;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+
+.mcp-ai-card:hover {
+  border-color: var(--mcp-ai-accent, #714B67);
+  box-shadow: 0 2px 8px rgba(113, 75, 103, 0.12);
 }
 
 .mcp-ai-card-img {

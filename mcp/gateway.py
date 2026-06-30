@@ -398,16 +398,14 @@ class McpGateway:
         # ── 4b. Add tool usage rules to prevent hallucination ───────────────
         system_prompt += """
 CRITICAL TOOL USAGE RULES (DO NOT HALLUCINATE):
-- You must call a tool for EVERY query or action request, even if you performed a similar action earlier in this session or have it in memory/history.
-- NEVER reply with cached or previously retrieved data from history or memory if the user is asking to look up, search, list, or show information. Always run a fresh tool call to get the latest database state.
-- Never answer database-related questions (invoices, partners, orders, balances, counts) from memory.
-- Always execute a fresh tool call to get real-time data from Odoo.
-- If you need field names for a model, call get_model_schema first; do not guess schemas.
-- Do not bypass tool calls. Bypassing tool calls and answering from memory is strictly prohibited.
-- Do not assume you know what is in the database. Always query the database using the tools.
-- Each user request is independent. Do not assume a previous tool call satisfies the current request.
-- Never report success for an action unless you received a tool result confirming it in THIS turn.
-- If the user asks to create, update, delete, or search for anything, you MUST call the appropriate tool. Do not skip the tool call based on previous history."""
+- You MUST call a tool for EVERY query or action request — no exceptions. Even if you performed a similar action earlier in this session.
+- NEVER answer from memory, training data, or session history. The database changes constantly. Always run a fresh tool call.
+- NEVER answer questions about records, counts, balances, names, or any Odoo data without querying first. Your training data is outdated.
+- NEVER call the same tool twice with the same arguments in one turn. If you already have the data, use it and proceed.
+- If you need field names for a model, call get_model_schema ONCE — do not guess, do not call it again on the same model.
+- Never report success for an action unless you received a confirming tool result IN THIS TURN.
+- Each user request is independent. A previous tool call never satisfies the current request.
+- If the user asks to create, update, delete, find, list, show, count, or check anything — call the tool. No exceptions."""
 
         # ── 4c. Inject structured JSON response format ──────────────────────
         system_prompt += """
@@ -418,9 +416,9 @@ Choose the _type that best fits your answer:
 
 {"_type": "text", "content": "Your plain-text answer here."}
 
-{"_type": "table", "title": "Optional title", "headers": ["Col A", "Col B"], "rows": [["val1", "val2"]]}
+{"_type": "table", "title": "Products (38)", "subtitle": "Filtered by: active=true", "headers": ["Name", "Price", "Code"], "rows": [["Laptop", "$1,200", "LAP-01"]]}
 
-{"_type": "fields", "title": "Record: Sale Order #42", "data": {"Customer": "Acme", "Total": 4500.0, "State": "done"}}
+{"_type": "fields", "title": "Sale Order #42", "subtitle": "Confirmed · Customer: Acme · $4,500", "data": {"Customer": "Acme", "Total": "$4,500", "State": "Confirmed"}}
 
 {"_type": "html", "content": "<div class='alert alert-success'>Done.</div>"}
 
@@ -428,24 +426,53 @@ Choose the _type that best fits your answer:
 
 {"_type": "attachment", "url": "/web/content/123", "filename": "invoice.pdf", "mimetype": "application/pdf"}
 
-{"_type": "cards", "title": "Products", "items": [{"title": "Laptop", "subtitle": "$1,200", "image_url": "/web/image/product.template/1/image_1920", "fields": {"Stock": 42}}]}
+{"_type": "cards", "title": "Products (5)", "items": [{"title": "Laptop", "subtitle": "$1,200", "image_url": "/web/image/product.template/1/image_1920", "fields": {"Stock": 42, "Code": "LAP-01"}}]}
 
-{"_type": "mixed", "blocks": [{"_type": "text", "content": "Summary:"}, {"_type": "table", "headers": ["A"], "rows": [["v"]]}]}
+{"_type": "stats", "title": "Invoice Overview", "items": [{"label": "Total", "value": "47", "color": "primary"}, {"label": "Overdue", "value": "8", "color": "danger"}, {"label": "Amount Due", "value": "$125,400", "color": "success"}]}
 
-Selection rules:
-- table: multiple records with the same fields (use tool results directly)
-- fields: details of a single record
-- cards: products, contacts, or any record set where images or visual layout matters
-- html: coloured badges, alerts, progress bars, formatted summaries
-- mixed: combine a text intro + table, or text + fields
-- text: short conversational answers, confirmations, error explanations
-- NEVER include markdown, code fences, or extra text outside the JSON
+{"_type": "list", "title": "Product Types", "items": ["Goods (consu)", "Service", "Combo"], "ordered": false}
+
+{"_type": "mixed", "blocks": [{"_type": "text", "content": "Here is the summary:"}, {"_type": "table", "title": "Orders", "headers": ["Name", "Total"], "rows": [["SO001", "$500"]]}]}
+
+Selection rules — use the FIRST type that fits, in this order:
+1. cards: products, contacts, or any set where images matter — always prefer over table when records have images
+2. table: 2+ records with the same fields — ALWAYS include row count in title e.g. "Invoices (12)"
+3. fields: exactly ONE record's details — include key status in subtitle e.g. "Confirmed · $4,500"
+4. stats: answer contains one or more numbers/counts/totals — use when asked "how many", "total", "count", "overview", "summary of numbers". Each item needs label + value + color (primary/success/danger/warning/muted).
+5. list: 3–15 simple text items with no columns — use for "what are the", "list the", "what types", "what options", "what stages". Use ordered:true for steps/sequences.
+6. mixed: summary sentence + data (text block + table or fields)
+7. html: coloured status badges, alerts, progress indicators
+8. image: when showing a single image
+9. attachment: when sharing a file download
+10. text: conversational reply, confirmation, or explanation with no data — content must be plain prose, NO markdown bold (**), NO markdown tables (|), NO bullet lists with *. If you have structured data, use the correct type.
+
+Standards that apply to ALL types:
+- table/cards: ALWAYS include count in title: "Products (38)", never just "Products"
+- fields: ALWAYS include a subtitle with the 2-3 most important status fields
+- NEVER include markdown, code fences, or any text outside the JSON object
 - The entire response must be a single JSON object starting with { and ending with }
 
-IMAGE FIELDS: When search_read returns a field like image_1920, image_128, etc., the value is already a URL string (e.g. "/web/image/product.template/5/image_1920"). Use it directly as image_url in cards items. Never request image fields in table or fields types — they are only useful in cards or image types."""
+IMAGE FIELDS: When search_read returns image_1920, image_128, etc., the value is already a URL string. Use it as image_url in cards. Never include image fields in table or fields types."""
 
-        # ── 5. Build tool specs from agent tools + external MCP servers ───
-        tool_specs = self._build_tool_specs(agent.effective_tool_ids, agent)
+        # ── 5. Build tool specs — filtered by user's access rules ────────
+        _is_admin = (
+            self.user.id in (1, 2)
+            or self.user.has_group('base.group_system')
+            or self.user.has_group('mcp_gateway.group_mcp_admin')
+            or self.user._is_admin()
+        )
+        if _is_admin:
+            _effective_tools = agent.effective_tool_ids
+        else:
+            _rules = self.env['mcp.access.rule'].get_rules_for_user(self.user)
+            if _rules.get('rules_matched') and not _rules.get('all_tools_allowed'):
+                _allowed = _rules['tool_ids'].ids
+                _effective_tools = agent.effective_tool_ids.filtered(
+                    lambda t: t.id in _allowed
+                )
+            else:
+                _effective_tools = agent.effective_tool_ids
+        tool_specs = self._build_tool_specs(_effective_tools, agent)
 
         # ── 5a. Inject dynamic tool guidance into system prompt ────────────
         tool_guidance = self._build_tool_guidance(tool_specs)
@@ -544,6 +571,10 @@ IMAGE FIELDS: When search_read returns a field like image_1920, image_128, etc.,
             raise
 
         assistant_text = response.get('text', '') if response else ''
+        if assistant_text:
+            brace_idx = assistant_text.find('{"_type":')
+            if brace_idx > 0:
+                assistant_text = assistant_text[brace_idx:]
         input_tokens = total_input
         output_tokens = total_output
 
@@ -569,6 +600,10 @@ IMAGE FIELDS: When search_read returns a field like image_1920, image_128, etc.,
             else:
                 _logger.warning('Gateway returned empty reply with no tool calls. Response: %s', response)
                 assistant_text = "I was unable to generate a response. Please try again or rephrase your message."
+
+        # Final guard: if AI returned plain text (ignored format instruction), wrap as {"_type": "text"}
+        if assistant_text and not assistant_text.strip().startswith('{'):
+            assistant_text = json.dumps({"_type": "text", "content": assistant_text})
 
         # Log assistant reply
         self.env['mcp.session.message'].create({
@@ -1151,9 +1186,9 @@ NEVER use xAxis.data or series.data — always use dataset.source.
             total_input += response.get('input_tokens', 0)
             total_output += response.get('output_tokens', 0)
 
-            # Detect possible hallucination: model returned stop with no tool call for action request
-            # on first turn of a new request (turn 0 means first API call in this loop)
-            if turn == 0 and not tool_calls and response.get('finish_reason') in ('stop', 'end_turn'):
+            # Detect hallucination: model returned stop with no tool call for action request,
+            # and no tool has been called at all yet this session turn.
+            if not tool_calls and total_tool_calls == 0 and response.get('finish_reason') in ('stop', 'end_turn'):
                 # Find the user message in history to check for action words
                 user_msg_for_check = None
                 for msg in messages:
@@ -1163,9 +1198,13 @@ NEVER use xAxis.data or series.data — always use dataset.source.
 
                 if user_msg_for_check:
                     user_msg_lower = user_msg_for_check.lower()
-                    action_words = ['create', 'make', 'add', 'update', 'delete', 'schedule',
-                                    'find', 'search', 'book', 'cancel', 'list', 'show', 'get',
-                                    'how many', 'count', 'fetch', 'retrieve', 'give me', 'what are']
+                    action_words = [
+                        'create', 'make', 'add', 'update', 'delete', 'schedule',
+                        'find', 'search', 'book', 'cancel', 'list', 'show', 'get',
+                        'how many', 'count', 'fetch', 'retrieve', 'give me', 'what are',
+                        'tell me', 'display', 'view', 'open', 'check', 'look up',
+                        'report', 'total', 'sum', 'average', 'which', 'who', 'when', 'where',
+                    ]
                     has_action_word = any(w in user_msg_lower for w in action_words)
 
                     if has_action_word:
