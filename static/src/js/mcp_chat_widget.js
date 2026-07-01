@@ -20,6 +20,8 @@ export class ChatWidget extends Component {
             sidebarOpen: true,
             collapsedAgents: {},
             pendingFile: null,
+            templates: [],
+            showTemplates: false,
         });
 
         this._sendSeq = 0;
@@ -133,7 +135,40 @@ export class ChatWidget extends Component {
         this.state.totalTokens = 0;
         this.state.estimatedCost = 0;
         this.state.sessionId = null;
+        this.state.showTemplates = false;
         if (window.innerWidth < 768) this.state.sidebarOpen = false;
+        this.loadTemplates(agent.id);
+    }
+
+    async loadTemplates(agentId) {
+        try {
+            this.state.templates = await this.orm.searchRead(
+                "mcp.prompt.template",
+                [["active", "=", true], "|", ["is_global", "=", true], ["agent_id", "=", agentId]],
+                ["id", "name", "content", "category", "variables"],
+                { order: "sequence asc" }
+            );
+        } catch (e) {
+            console.error("MCP: Failed to load templates", e);
+        }
+    }
+
+    toggleTemplates() {
+        this.state.showTemplates = !this.state.showTemplates;
+    }
+
+    insertTemplate(template) {
+        const el = this.messageInput.el;
+        if (!el) return;
+        el.value = template.content;
+        el.dispatchEvent(new Event("input", { bubbles: true }));
+        const match = template.content.match(/\{(\w+)\}/);
+        if (match) {
+            const start = template.content.indexOf(match[0]);
+            el.setSelectionRange(start, start + match[0].length);
+        }
+        el.focus();
+        this.state.showTemplates = false;
     }
 
     async selectSession(session) {
@@ -143,6 +178,7 @@ export class ChatWidget extends Component {
             const agent = this.state.agents.find(a => a.id === session.agent_id[0]);
             this.state.selectedAgent = agent || { id: session.agent_id[0], name: session.agent_id[1] };
             this.state.sessionId = session.id;
+            this.loadTemplates(session.agent_id[0]);
 
             const messages = await this.orm.searchRead(
                 "mcp.session.message",
@@ -396,6 +432,12 @@ export class ChatWidget extends Component {
                 }
             }
             return;
+        }
+
+        if (this.state.showTemplates &&
+            !e.target.closest('.mcp-templates-panel') &&
+            !e.target.closest('.mcp-templates-btn')) {
+            this.state.showTemplates = false;
         }
 
         const chip = e.target.closest('.mcp-suggestion-chip');

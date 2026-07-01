@@ -29,8 +29,8 @@ from . import mcp_agent_memory
 from . import mcp_webhook_trigger
 from . import mcp_cost_entry
 from . import mcp_external_server
-from . import mcp_issue
 from . import mcp_echart
+from . import mcp_model_option
 
 __all__ = [
     'mcp_tool_category',
@@ -44,7 +44,6 @@ __all__ = [
     'mcp_webhook_trigger',
     'mcp_cost_entry',
     'mcp_external_server',
-    'mcp_issue',
     'mcp_echart',
 ]
 

@@ -1,6 +1,6 @@
 {
     'name': 'AI Gateway',
-    'version': '18.0.2.0.0',
+    'version': '18.0.2.0.3',
     'category': 'Technical',
     'license': 'LGPL-3',
     'author': 'AI Gateway Contributors',
@@ -13,7 +13,7 @@ directly into your Odoo environment. Configure multiple AI agents, register tool
 chat with agents directly inside Odoo.
 
 Features:
-  • Multi-provider LLM support (Anthropic, OpenAI, Gemini, Ollama, MiniMax, OpenCode)
+  • Multi-provider LLM support (Anthropic, OpenAI, Gemini, Ollama, Grok/xAI, OpenCode)
   • MCP Server for Odoo - expose Odoo tools to external AI clients
   • Connect to external MCP servers (WhatsApp, YouTube, etc.)
   • No-code tool registration (Odoo ORM, HTTP APIs, custom MCP servers)
@@ -36,7 +36,9 @@ Requirements:
         'security/mcp_security.xml',
         'security/ir.model.access.csv',
         'security/mcp_record_rules.xml',
+        'data/mcp_model_options.xml',
         'data/default_tools.xml',
+        'data/default_prompt_templates.xml',
         'data/default_access_rules.xml',
         'data/mcp_cron.xml',
         'views/mcp_agent_views.xml',
@@ -52,7 +54,6 @@ Requirements:
         'views/mcp_connection_test_wizard_views.xml',
         'views/mcp_cost_entry_views.xml',
         'views/mcp_external_server_views.xml',
-        'views/mcp_issue_views.xml',
         'views/mcp_echart_views.xml',
         'views/menu.xml',
     ],

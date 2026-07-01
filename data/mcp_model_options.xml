@@ -1,0 +1,202 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo noupdate="0">
+    <!-- Anthropic -->
+    <record id="model_anthropic_opus_4_7" model="mcp.model.option">
+        <field name="provider">anthropic</field>
+        <field name="name">claude-opus-4-7</field>
+    </record>
+    <record id="model_anthropic_sonnet_4_6" model="mcp.model.option">
+        <field name="provider">anthropic</field>
+        <field name="name">claude-sonnet-4-6</field>
+    </record>
+    <record id="model_anthropic_haiku_4_5" model="mcp.model.option">
+        <field name="provider">anthropic</field>
+        <field name="name">claude-haiku-4-5</field>
+    </record>
+    <record id="model_anthropic_opus_4_6" model="mcp.model.option">
+        <field name="provider">anthropic</field>
+        <field name="name">claude-opus-4-6</field>
+    </record>
+    <record id="model_anthropic_opus_4_5" model="mcp.model.option">
+        <field name="provider">anthropic</field>
+        <field name="name">claude-opus-4-5</field>
+    </record>
+    <record id="model_anthropic_opus_4_1" model="mcp.model.option">
+        <field name="provider">anthropic</field>
+        <field name="name">claude-opus-4-1</field>
+    </record>
+    <record id="model_anthropic_sonnet_4_5" model="mcp.model.option">
+        <field name="provider">anthropic</field>
+        <field name="name">claude-sonnet-4-5</field>
+    </record>
+    <record id="model_anthropic_sonnet_4" model="mcp.model.option">
+        <field name="provider">anthropic</field>
+        <field name="name">claude-sonnet-4</field>
+    </record>
+    <record id="model_anthropic_haiku_35" model="mcp.model.option">
+        <field name="provider">anthropic</field>
+        <field name="name">claude-3-5-haiku</field>
+    </record>
+    <record id="model_anthropic_35_sonnet" model="mcp.model.option">
+        <field name="provider">anthropic</field>
+        <field name="name">claude-3-5-sonnet-20241022</field>
+    </record>
+
+    <!-- OpenAI -->
+    <record id="model_openai_gpt4o" model="mcp.model.option">
+        <field name="provider">openai</field>
+        <field name="name">gpt-4o</field>
+    </record>
+    <record id="model_openai_gpt4o_mini" model="mcp.model.option">
+        <field name="provider">openai</field>
+        <field name="name">gpt-4o-mini</field>
+    </record>
+    <record id="model_openai_gpt4_turbo" model="mcp.model.option">
+        <field name="provider">openai</field>
+        <field name="name">gpt-4-turbo</field>
+    </record>
+    <record id="model_openai_o1_preview" model="mcp.model.option">
+        <field name="provider">openai</field>
+        <field name="name">o1-preview</field>
+    </record>
+    <record id="model_openai_o1_mini" model="mcp.model.option">
+        <field name="provider">openai</field>
+        <field name="name">o1-mini</field>
+    </record>
+
+    <!-- Gemini -->
+    <record id="model_gemini_20_flash" model="mcp.model.option">
+        <field name="provider">gemini</field>
+        <field name="name">gemini-2.0-flash</field>
+    </record>
+    <record id="model_gemini_15_pro" model="mcp.model.option">
+        <field name="provider">gemini</field>
+        <field name="name">gemini-1.5-pro</field>
+    </record>
+    <record id="model_gemini_15_flash" model="mcp.model.option">
+        <field name="provider">gemini</field>
+        <field name="name">gemini-1.5-flash</field>
+    </record>
+
+    <!-- Ollama -->
+    <record id="model_ollama_llama31" model="mcp.model.option">
+        <field name="provider">ollama</field>
+        <field name="name">llama3.1</field>
+    </record>
+    <record id="model_ollama_llama3" model="mcp.model.option">
+        <field name="provider">ollama</field>
+        <field name="name">llama3</field>
+    </record>
+    <record id="model_ollama_mistral" model="mcp.model.option">
+        <field name="provider">ollama</field>
+        <field name="name">mistral</field>
+    </record>
+    <record id="model_ollama_codellama" model="mcp.model.option">
+        <field name="provider">ollama</field>
+        <field name="name">codellama</field>
+    </record>
+
+    <!-- Grok (xAI) -->
+    <record id="model_grok_3" model="mcp.model.option">
+        <field name="provider">grok</field>
+        <field name="name">grok-3</field>
+    </record>
+    <record id="model_grok_3_mini" model="mcp.model.option">
+        <field name="provider">grok</field>
+        <field name="name">grok-3-mini</field>
+    </record>
+    <record id="model_grok_2" model="mcp.model.option">
+        <field name="provider">grok</field>
+        <field name="name">grok-2</field>
+    </record>
+    <record id="model_grok_beta" model="mcp.model.option">
+        <field name="provider">grok</field>
+        <field name="name">grok-beta</field>
+    </record>
+
+    <!-- OpenCode Zen -->
+    <record id="model_opencode_minimax_m25_free" model="mcp.model.option">
+        <field name="provider">opencode</field>
+        <field name="name">minimax-m2.5-free</field>
+    </record>
+    <record id="model_opencode_deepseek_v4_flash_free" model="mcp.model.option">
+        <field name="provider">opencode</field>
+        <field name="name">deepseek-v4-flash-free</field>
+    </record>
+    <record id="model_opencode_big_pickle" model="mcp.model.option">
+        <field name="provider">opencode</field>
+        <field name="name">big-pickle</field>
+    </record>
+    <record id="model_opencode_ring_26_1t_free" model="mcp.model.option">
+        <field name="provider">opencode</field>
+        <field name="name">ring-2.6-1t-free</field>
+    </record>
+    <record id="model_opencode_nemotron_3_super_free" model="mcp.model.option">
+        <field name="provider">opencode</field>
+        <field name="name">nemotron-3-super-free</field>
+    </record>
+    <record id="model_opencode_minimax_m27" model="mcp.model.option">
+        <field name="provider">opencode</field>
+        <field name="name">minimax-m2.7</field>
+    </record>
+    <record id="model_opencode_minimax_m25" model="mcp.model.option">
+        <field name="provider">opencode</field>
+        <field name="name">minimax-m2.5</field>
+    </record>
+    <record id="model_opencode_qwen36_plus" model="mcp.model.option">
+        <field name="provider">opencode</field>
+        <field name="name">qwen3.6-plus</field>
+    </record>
+    <record id="model_opencode_qwen35_plus" model="mcp.model.option">
+        <field name="provider">opencode</field>
+        <field name="name">qwen3.5-plus</field>
+    </record>
+    <record id="model_opencode_glm51" model="mcp.model.option">
+        <field name="provider">opencode</field>
+        <field name="name">glm-5.1</field>
+    </record>
+    <record id="model_opencode_glm5" model="mcp.model.option">
+        <field name="provider">opencode</field>
+        <field name="name">glm-5</field>
+    </record>
+    <record id="model_opencode_kimi_k26" model="mcp.model.option">
+        <field name="provider">opencode</field>
+        <field name="name">kimi-k2.6</field>
+    </record>
+    <record id="model_opencode_kimi_k25" model="mcp.model.option">
+        <field name="provider">opencode</field>
+        <field name="name">kimi-k2.5</field>
+    </record>
+    <record id="model_opencode_gpt55" model="mcp.model.option">
+        <field name="provider">opencode</field>
+        <field name="name">gpt-5.5</field>
+    </record>
+    <record id="model_opencode_gpt55_pro" model="mcp.model.option">
+        <field name="provider">opencode</field>
+        <field name="name">gpt-5.5-pro</field>
+    </record>
+    <record id="model_opencode_gpt54" model="mcp.model.option">
+        <field name="provider">opencode</field>
+        <field name="name">gpt-5.4</field>
+    </record>
+    <record id="model_opencode_gpt54_pro" model="mcp.model.option">
+        <field name="provider">opencode</field>
+        <field name="name">gpt-5.4-pro</field>
+    </record>
+    <record id="model_opencode_gpt54_mini" model="mcp.model.option">
+        <field name="provider">opencode</field>
+        <field name="name">gpt-5.4-mini</field>
+    </record>
+    <record id="model_opencode_gpt5" model="mcp.model.option">
+        <field name="provider">opencode</field>
+        <field name="name">gpt-5</field>
+    </record>
+    <record id="model_opencode_gemini31_pro" model="mcp.model.option">
+        <field name="provider">opencode</field>
+        <field name="name">gemini-3.1-pro</field>
+    </record>
+    <record id="model_opencode_gemini3_flash" model="mcp.model.option">
+        <field name="provider">opencode</field>
+        <field name="name">gemini-3-flash</field>
+    </record>
+</odoo>

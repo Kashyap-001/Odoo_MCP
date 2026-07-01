@@ -816,6 +816,89 @@ h5.mcp-md-h { font-size: 0.9rem; }
 .mcp-attach-btn:hover:not(:disabled) { color: #6366f1; }
 .mcp-attach-btn:disabled { opacity: 0.4; cursor: not-allowed; }
 
+/* ── Templates button ───────────────────────────────────────── */
+.mcp-templates-btn {
+  background: none;
+  border: none;
+  color: #94a3b8;
+  padding: 0 8px;
+  cursor: pointer;
+  font-size: 1rem;
+  flex-shrink: 0;
+  align-self: flex-end;
+  padding-bottom: 10px;
+  transition: color 0.15s;
+}
+.mcp-templates-btn:hover { color: var(--mcp-primary, #714B67); }
+.mcp-templates-btn.active { color: var(--mcp-primary, #714B67); }
+
+/* ── Templates panel ────────────────────────────────────────── */
+.mcp-templates-panel {
+  background: var(--mcp-surface, #ffffff);
+  border: 1px solid var(--mcp-border-color, #e2e8f0);
+  border-radius: 10px;
+  margin-bottom: 0.5rem;
+  max-height: 300px;
+  overflow-y: auto;
+  box-shadow: 0 -4px 16px rgba(0,0,0,0.08);
+}
+.mcp-templates-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0.5rem 0.75rem;
+  border-bottom: 1px solid var(--mcp-border-color, #e2e8f0);
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--mcp-text-muted, #64748b);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  position: sticky;
+  top: 0;
+  background: var(--mcp-surface, #ffffff);
+  z-index: 1;
+}
+.mcp-templates-close {
+  background: none;
+  border: none;
+  color: var(--mcp-text-muted, #94a3b8);
+  cursor: pointer;
+  padding: 0 4px;
+  line-height: 1;
+}
+.mcp-templates-close:hover { color: var(--mcp-text, #1e293b); }
+.mcp-template-category-label {
+  font-size: 0.65rem;
+  font-weight: 700;
+  color: var(--mcp-text-muted, #94a3b8);
+  letter-spacing: 0.06em;
+  padding: 0.4rem 0.75rem 0.15rem;
+}
+.mcp-template-item {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  width: 100%;
+  background: none;
+  border: none;
+  padding: 0.4rem 0.75rem;
+  cursor: pointer;
+  text-align: left;
+  transition: background 0.1s;
+}
+.mcp-template-item:hover { background: var(--mcp-hover-bg, #f1f5f9); }
+.mcp-template-name {
+  font-size: 0.82rem;
+  font-weight: 500;
+  color: var(--mcp-text, #1e293b);
+  line-height: 1.3;
+}
+.mcp-template-vars {
+  font-size: 0.7rem;
+  color: var(--mcp-text-muted, #94a3b8);
+  margin-top: 1px;
+}
+
 .mcp-file-chip {
   display: inline-flex;
   align-items: center;

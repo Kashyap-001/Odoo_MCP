@@ -40,6 +40,7 @@ FALLBACK_MODELS = {
     'anthropic': 'claude-haiku-4-5-20250501',
     'gemini': 'gemini-1.5-flash',
     'ollama': 'llama3.1',
+    'grok': 'grok-3-mini',
 }
 
 
@@ -56,7 +57,7 @@ def detect_message_format(provider_type, model_id):
         elif model_id.startswith('gemini-'):
             return 'gemini'
         else:
-            # minimax, deepseek, qwen, glm, kimi, gpt, etc.
+            # deepseek, qwen, glm, kimi, gpt, minimax model names (opencode models), etc.
             return 'openai'
 
     if provider_type == 'anthropic':
@@ -390,12 +391,24 @@ class McpGateway:
         if agent.enable_memory:
             system_prompt = self._inject_memory(agent, self.user, system_prompt)
 
-        # ── 4a. Inject current date/time into system prompt (fresh per API call) ──
+        # ── 4a. Inject current user info so AI always knows who it's talking to ──
+        user = self.env.user
+        user_info = f"\n\nCURRENT USER: {user.name}"
+        if user.email:
+            user_info += f" <{user.email}>"
+        if user.company_id:
+            user_info += f" | Company: {user.company_id.name}"
+        dept = getattr(user, 'department_id', None)
+        if dept:
+            user_info += f" | Department: {dept.name}"
+        system_prompt += user_info
+
+        # ── 4b. Inject current date/time into system prompt (fresh per API call) ──
         # datetime.now() called inline - no intermediate variables
         system_prompt += f"\n\nCURRENT DATE AND TIME: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} (server) / {datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S UTC')}\nWhen user says 'today', 'tomorrow', etc, calculate from this date, never guess."
         _logger.info("DATE_INJECTION_CHECK: %s", datetime.now().strftime('%Y-%m-%d %H:%M:%S'))
 
-        # ── 4b. Add tool usage rules to prevent hallucination ───────────────
+        # ── 4c. Add tool usage rules to prevent hallucination ───────────────
         system_prompt += """
 CRITICAL TOOL USAGE RULES (DO NOT HALLUCINATE):
 - You MUST call a tool for EVERY query or action request — no exceptions. Even if you performed a similar action earlier in this session.
@@ -852,8 +865,18 @@ IMAGE FIELDS: When search_read returns image_1920, image_128, etc., the value is
                 ('session_id', '=', session.id),
             ], order='create_date ASC')
 
+            def _plain(content):
+                try:
+                    p = json.loads(content or '')
+                    if isinstance(p, dict):
+                        return p.get('content') or p.get('text') or ''
+                except Exception:
+                    pass
+                return content or ''
+
             conversation = '\n'.join([
-                f'{m.role}: {m.content}' for m in messages
+                f'{m.role}: {_plain(m.content)}' for m in messages
+                if m.role in ('user', 'assistant') and _plain(m.content)
             ])
 
             summarize_prompt = [
@@ -1078,10 +1101,72 @@ NEVER use xAxis.data or series.data — always use dataset.source.
                                         })
                     except Exception as e:
                         self._logger.warning('Failed to fetch tools from %s: %s', server.name, str(e))
+                elif server.server_type == 'stdio' and server.command:
+                    try:
+                        for t in self._fetch_stdio_mcp_tools(server):
+                            tools.append({
+                                'name': f"ext_{server.name}_{t['name']}",
+                                'description': f"[{server.name}] {t.get('description', '')}",
+                                'input_schema': t.get('inputSchema', {}),
+                                'server_name': server.name,
+                                'original_name': t['name'],
+                            })
+                    except Exception as e:
+                        self._logger.warning('Failed to fetch stdio tools from %s: %s', server.name, str(e))
         except Exception as e:
             self._logger.warning('Failed to load external MCP servers: %s', str(e))
 
         return tools
+
+    def _fetch_stdio_mcp_tools(self, server) -> list:
+        """Launch a stdio MCP server, fetch its tool list, then kill the process."""
+        import subprocess
+        import shlex
+        import os
+
+        command = server.command.strip()
+        args_raw = server.args or ''
+        try:
+            extra_args = json.loads(args_raw) if args_raw.strip().startswith('[') else shlex.split(args_raw)
+        except Exception:
+            extra_args = []
+
+        env_extra = {}
+        if server.env_vars:
+            try:
+                env_extra = json.loads(server.env_vars)
+            except Exception:
+                pass
+
+        proc = subprocess.Popen(
+            [command] + extra_args,
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            env={**os.environ, **env_extra},
+        )
+        try:
+            def _send(msg):
+                proc.stdin.write((json.dumps(msg) + '\n').encode())
+                proc.stdin.flush()
+
+            def _recv():
+                line = proc.stdout.readline()
+                return json.loads(line) if line else {}
+
+            _send({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {
+                "protocolVersion": "2024-11-05",
+                "capabilities": {},
+                "clientInfo": {"name": "odoo-mcp-gateway", "version": "1.0"},
+            }})
+            _recv()  # consume initialize response
+            _send({"jsonrpc": "2.0", "method": "notifications/initialized", "params": {}})
+            _send({"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}})
+            data = _recv()
+            return data.get('result', {}).get('tools', [])
+        finally:
+            proc.kill()
+            proc.wait()
 
     def _call_provider_with_tools(self, provider, agent, messages, tool_specs, session=None, message_format='openai'):
         """
@@ -1154,17 +1239,13 @@ NEVER use xAxis.data or series.data — always use dataset.source.
             if not response:
                 continue
 
-            # Build assistant message from response
-            # Note: Don't include tool_calls in the message for providers that don't need it
-            # Some providers like MiniMax get confused when tool_calls persists across turns
             assistant_msg = {
                 'role': 'assistant',
                 'content': response.get('text') or response.get('reply') or '',
             }
 
             # Add tool_calls to assistant message for OpenAI-format providers (required for tool result matching)
-            provider_name = getattr(provider, '__class__', None).__name__ or ''
-            if response.get('tool_calls') and 'MiniMax' not in provider_name:
+            if response.get('tool_calls'):
                 if message_format == 'openai':
                     # OpenAI spec: assistant message must carry tool_calls so tool results can be matched by ID
                     assistant_msg['tool_calls'] = [
@@ -1235,7 +1316,7 @@ NEVER use xAxis.data or series.data — always use dataset.source.
                                 messages_to_send.pop()  # remove correction
                                 messages_to_send.pop()  # remove stale no-tool assistant msg
                                 assistant_msg = {'role': 'assistant', 'content': response_text}
-                                if retry_resp.get('tool_calls') and 'MiniMax' not in provider_name:
+                                if retry_resp.get('tool_calls'):
                                     if message_format == 'openai':
                                         assistant_msg['tool_calls'] = [
                                             {
@@ -2021,6 +2102,9 @@ NEVER use xAxis.data or series.data — always use dataset.source.
             if not server:
                 return json.dumps({'success': False, 'error': f'External server not found: {server_name}'})
 
+            if server.server_type == 'stdio':
+                return self._call_stdio_mcp_tool(server, tool_name, arguments)
+
             headers = {'Content-Type': 'application/json'}
             auth_credential = server.get_decrypted_auth_value()
             if server.auth_type == 'bearer' and auth_credential:
@@ -2059,6 +2143,74 @@ NEVER use xAxis.data or series.data — always use dataset.source.
         except Exception as e:
             self._logger.error('External MCP tool call failed: %s', str(e))
             return json.dumps({'success': False, 'error': str(e)})
+
+    def _call_stdio_mcp_tool(self, server, tool_name: str, arguments: dict) -> str:
+        """Call a tool on a stdio MCP server via JSON-RPC over subprocess stdin/stdout."""
+        import subprocess
+        import shlex
+        import os
+
+        command = server.command.strip()
+        args_raw = server.args or ''
+        try:
+            extra_args = json.loads(args_raw) if args_raw.strip().startswith('[') else shlex.split(args_raw)
+        except Exception:
+            extra_args = []
+
+        env_extra = {}
+        if server.env_vars:
+            try:
+                env_extra = json.loads(server.env_vars)
+            except Exception:
+                pass
+
+        proc = subprocess.Popen(
+            [command] + extra_args,
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            env={**os.environ, **env_extra},
+        )
+        try:
+            def _send(msg):
+                proc.stdin.write((json.dumps(msg) + '\n').encode())
+                proc.stdin.flush()
+
+            def _recv():
+                line = proc.stdout.readline()
+                return json.loads(line) if line else {}
+
+            _send({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {
+                "protocolVersion": "2024-11-05",
+                "capabilities": {},
+                "clientInfo": {"name": "odoo-mcp-gateway", "version": "1.0"},
+            }})
+            _recv()
+            _send({"jsonrpc": "2.0", "method": "notifications/initialized", "params": {}})
+            _send({"jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": {
+                "name": tool_name,
+                "arguments": arguments,
+            }})
+            data = _recv()
+
+            if 'error' in data:
+                return json.dumps({'success': False, 'error': data['error'].get('message', 'Unknown error')})
+
+            result = data.get('result', {})
+            if result.get('isError'):
+                content = result.get('content', [{}])
+                return json.dumps({'success': False, 'error': content[0].get('text', 'Tool error')})
+
+            content = result.get('content', [{}])
+            text = content[0].get('text', json.dumps(result)) if content else json.dumps(result)
+            return json.dumps({'success': True, 'result': text})
+
+        except Exception as e:
+            self._logger.error('Stdio MCP tool call failed (%s/%s): %s', server.name, tool_name, str(e))
+            return json.dumps({'success': False, 'error': str(e)})
+        finally:
+            proc.kill()
+            proc.wait()
 
     def _build_message_history(self, session, system_prompt: str) -> list:
         """

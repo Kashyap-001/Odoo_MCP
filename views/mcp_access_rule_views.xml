@@ -77,9 +77,18 @@
                         <!-- Page 2: What they can access -->
                         <page string="What" name="what">
                             <group string="Agents">
-                                <field name="agent_ids" widget="many2many_tags"
-                                       nolabel="1" colspan="2"
-                                       help="Leave empty to allow access to all agents"/>
+                                <p class="text-muted" colspan="2" invisible="agent_ids">
+                                    No agents selected — all agents are allowed for users matched by this rule.
+                                </p>
+                                <field name="agent_ids" nolabel="1" colspan="2"
+                                       help="Leave empty to allow all agents; select specific agents to restrict access">
+                                    <list>
+                                        <field name="name" string="Agent"/>
+                                        <field name="provider" string="Provider"/>
+                                        <field name="description" string="Description" optional="show"/>
+                                        <field name="active" optional="hide"/>
+                                    </list>
+                                </field>
                             </group>
                             <group string="Tools">
                                 <p class="text-muted" colspan="2" invisible="tool_ids">

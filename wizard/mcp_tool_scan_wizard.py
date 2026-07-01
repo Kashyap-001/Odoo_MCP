@@ -14,6 +14,7 @@ Developer notes:
   - Allows batch registration of multiple tools
 """
 
+import json
 import logging
 from odoo import fields, models, _, exceptions
 
@@ -65,17 +66,20 @@ class ToolScanWizard(models.TransientModel):
             lines_to_create = []
 
             for model_name in sorted(registry.models.keys()):
-                # Skip internal models
                 if model_name.startswith('_'):
-                    continue
-                if model_name in ('ir.model', 'ir.model.fields'):
                     continue
 
                 model = self.env[model_name]
+
+                # Skip transient/wizard models — they hold no persistent data
+                if model._transient:
+                    continue
+
                 model_string = model._description
 
-                # Check for common methods
-                for method_name in ['search_read', 'create', 'write', 'action_confirm']:
+                # Only scan methods that work on model-level (no record ID needed).
+                # write/action_confirm require a recordset with IDs — skip them.
+                for method_name in ['search_read', 'create']:
                     if hasattr(model, method_name):
                         tool_name = f'{model_name.replace(".", "_")}_{method_name}'
 
@@ -245,8 +249,6 @@ class ToolScanLine(models.TransientModel):
         [
             ('search_read', 'search_read'),
             ('create', 'create'),
-            ('write', 'write'),
-            ('action_confirm', 'action_confirm'),
         ],
         string=_('Method'),
         readonly=True,

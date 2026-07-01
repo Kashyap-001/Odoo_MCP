@@ -46,7 +46,8 @@
                     <!-- Provider Settings -->
                     <group string="Provider Configuration" colspan="2" col="2">
                         <field name="model_name"/>
-                        <field name="model_selection" string="Select from Available Models" placeholder="Pick a model..."/>
+                        <field name="model_selection" string="Select from Available Models"
+                               options="{'no_create': True, 'no_quick_create': True}"/>
                         <field name="api_base_url" placeholder="Optional: Override default API URL"/>
                         <field name="api_key" password="1" colspan="2"/>
                     </group>

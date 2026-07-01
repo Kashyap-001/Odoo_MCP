@@ -87,19 +87,6 @@
         <field name="target">new</field>
     </record>
 
-    <!-- Action for Issues -->
-    <record id="action_mcp_issue" model="ir.actions.act_window">
-        <field name="name">Issues</field>
-        <field name="res_model">mcp.issue</field>
-        <field name="view_mode">list,form,kanban</field>
-    </record>
-
-    <!-- Action for Issue Tags -->
-    <record id="action_mcp_issue_tag" model="ir.actions.act_window">
-        <field name="name">Issue Tags</field>
-        <field name="res_model">mcp.issue.tag</field>
-        <field name="view_mode">list,form</field>
-    </record>
 
     <!-- ==================== MENU ITEMS ==================== -->
 
@@ -175,13 +162,4 @@
               action="action_mcp_webhook_trigger" parent="menu_mcp_configuration" sequence="30"
               groups="mcp_gateway.group_mcp_admin"/>
 
-    <!-- Issues (manager+) -->
-    <menuitem id="menu_mcp_issues" name="Issues" parent="menu_mcp_root" sequence="50"
-              groups="mcp_gateway.group_mcp_manager"/>
-    <menuitem id="menu_mcp_issue_list" name="Issues" action="action_mcp_issue"
-              parent="menu_mcp_issues" sequence="10"
-              groups="mcp_gateway.group_mcp_manager"/>
-    <menuitem id="menu_mcp_issue_tags" name="Tags" action="action_mcp_issue_tag"
-              parent="menu_mcp_issues" sequence="20"
-              groups="mcp_gateway.group_mcp_manager"/>
 </odoo>

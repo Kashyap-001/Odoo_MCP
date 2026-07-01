@@ -323,24 +323,19 @@ class ChatController(http.Controller):
             if not trigger:
                 return {'status': 'error', 'error': 'Invalid webhook token'}
 
-            # Get the trigger model and record from request
-            body = http.request.get_json_data()
+            body = http.request.get_json_data() or {}
             model_name = body.get('model')
             record_id = body.get('record_id')
 
-            if not model_name or not record_id:
-                return {'status': 'error', 'error': 'Missing model or record_id in request'}
+            # Record is optional — supports scheduled/recordless triggers (e.g. n8n cron)
+            record = None
+            if model_name and record_id:
+                if model_name != trigger.trigger_model:
+                    return {'status': 'error', 'error': 'Model mismatch'}
+                record = http.request.env[model_name].browse(record_id)
+                if not record.exists():
+                    return {'status': 'error', 'error': 'Record not found'}
 
-            # Verify model matches trigger
-            if model_name != trigger.trigger_model:
-                return {'status': 'error', 'error': 'Model mismatch'}
-
-            # Get record
-            record = http.request.env[model_name].browse(record_id)
-            if not record.exists():
-                return {'status': 'error', 'error': 'Record not found'}
-
-            # Fire trigger
             result = trigger.fire(record)
 
             return {

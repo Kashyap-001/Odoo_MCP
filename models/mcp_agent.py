@@ -277,7 +277,7 @@ class Agent(models.Model):
             ('openai', 'OpenAI'),
             ('gemini', 'Google Gemini'),
             ('ollama', 'Ollama (local)'),
-            ('minimax', 'MiniMax'),
+            ('grok', 'Grok (xAI)'),
             ('opencode', 'OpenCode AI'),
         ],
         string=_('Provider'),
@@ -291,10 +291,11 @@ class Agent(models.Model):
         required=True,
         help=_('Enter model name manually or use the dropdown below.'),
     )
-    model_selection = fields.Selection(
+    model_selection = fields.Many2one(
+        'mcp.model.option',
         string=_('Available Models'),
-        selection='_get_model_selection_options',
-        help=_('Select from available models. Updates when you change provider or API key.'),
+        domain="[('provider', '=', provider)]",
+        help=_('Select from available models for this provider. Use Refresh Models to fetch latest from API.'),
     )
     api_key = fields.Char(
         string=_('API Key'),
@@ -449,13 +450,13 @@ class Agent(models.Model):
             'openai': 'gpt-4o',
             'gemini': 'gemini-2.0-flash',
             'ollama': 'llama3.1',
-            'minimax': 'abab6.5s-chat',
+            'grok': 'grok-3-mini',
             'opencode': 'minimax-m2.5-free',
         }
         if self.provider in defaults:
             self.model_name = defaults[self.provider]
 
-        # Clear model_selection when provider changes
+        # Clear model_selection when provider changes (old provider's record is invalid)
         self.model_selection = False
 
         # Try to fetch available models if API key is present
@@ -467,9 +468,11 @@ class Agent(models.Model):
                     models = provider_obj.get_available_models(self)
                     _logger.info('_onchange_provider: got models %s', models)
                     if models:
-                        # Build selection from API models
-                        self.model_selection = models[0] if models else False
-                        self.model_name = models[0] if models else self.model_name
+                        self.model_name = models[0]
+                        rec = self.env['mcp.model.option'].search(
+                            [('provider', '=', self.provider), ('name', '=', models[0])], limit=1
+                        )
+                        self.model_selection = rec
             except Exception as e:
                 _logger.warning('_onchange_provider: failed to fetch models: %s', e)
 
@@ -486,69 +489,18 @@ class Agent(models.Model):
                     models = provider_obj.get_available_models(self)
                     _logger.info('_onchange_api_key: got models %s', models)
                     if models:
-                        self.model_selection = models[0]
                         self.model_name = models[0]
+                        rec = self.env['mcp.model.option'].search(
+                            [('provider', '=', self.provider), ('name', '=', models[0])], limit=1
+                        )
+                        self.model_selection = rec
             except Exception as e:
                 _logger.warning('_onchange_api_key: failed to fetch models: %s', e)
 
     @api.onchange('model_selection')
     def _onchange_model_selection(self):
-        """
-        Sync model_selection to model_name when user picks from dropdown.
-        """
         if self.model_selection:
-            self.model_name = self.model_selection
-
-    @api.model
-    def _get_model_selection_options(self):
-        """
-        Get available models for dropdown - ALL models combined.
-
-        Since selection method can't access current record context (no @api.one),
-        returns all models from all providers. Users can search/filter in dropdown.
-
-        Returns:
-            list: List of (value, label) tuples for selection
-        """
-        _logger.info('_get_model_selection_options called')
-        all_models = [
-            # Anthropic
-            'claude-opus-4-7', 'claude-sonnet-4-6', 'claude-haiku-4-5',
-            # OpenAI
-            'gpt-4o', 'gpt-4o-mini', 'gpt-4-turbo', 'o1-preview', 'o1-mini',
-            # Gemini
-            'gemini-2.0-flash', 'gemini-1.5-pro', 'gemini-1.5-flash',
-            # Ollama
-            'llama3.1', 'llama3', 'mistral', 'codellama',
-            # MiniMax
-            'abab6.5s-chat', 'abab6.5g-chat', 'abab5.5s-chat',
-            # OpenCode Zen models (https://opencode.ai/zen)
-            # Free models
-            'minimax-m2.5-free', 'deepseek-v4-flash-free', 'big-pickle',
-            'ring-2.6-1t-free', 'nemotron-3-super-free',
-            # MiniMax
-            'minimax-m2.7', 'minimax-m2.5',
-            # Qwen
-            'qwen3.6-plus', 'qwen3.5-plus',
-            # GLM
-            'glm-5.1', 'glm-5',
-            # Kimi
-            'kimi-k2.6', 'kimi-k2.5',
-            # GPT 5.x series (via OpenCode Zen /v1/responses)
-            'gpt-5.5', 'gpt-5.5-pro', 'gpt-5.4', 'gpt-5.4-pro',
-            'gpt-5.4-mini', 'gpt-5.4-nano', 'gpt-5.3-codex',
-            'gpt-5.3-codex-spark', 'gpt-5.2', 'gpt-5.2-codex',
-            'gpt-5.1', 'gpt-5.1-codex', 'gpt-5.1-codex-max',
-            'gpt-5.1-codex-mini', 'gpt-5', 'gpt-5-codex', 'gpt-5-nano',
-            # Claude via OpenCode Zen (/v1/messages)
-            'claude-opus-4-6', 'claude-opus-4-5', 'claude-opus-4-1',
-            'claude-sonnet-4-5', 'claude-sonnet-4', 'claude-3-5-haiku',
-            # Gemini via OpenCode Zen
-            'gemini-3.1-pro', 'gemini-3-flash',
-        ]
-        result = [(m, m) for m in sorted(set(all_models))]
-        _logger.info('_get_model_selection_options returning %d models', len(result))
-        return result
+            self.model_name = self.model_selection.name
 
     @api.constrains('temperature')
     def _check_temperature(self):
@@ -775,7 +727,7 @@ class Agent(models.Model):
         from ..mcp.providers.openai import OpenAIAdapter
         from ..mcp.providers.gemini import GeminiAdapter
         from ..mcp.providers.ollama import OllamaAdapter
-        from ..mcp.providers.minimax import MiniMaxAdapter
+        from ..mcp.providers.grok import GrokAdapter
         from ..mcp.providers.opencode import OpenCodeAdapter
 
         provider_map = {
@@ -783,7 +735,7 @@ class Agent(models.Model):
             'openai': OpenAIAdapter,
             'gemini': GeminiAdapter,
             'ollama': OllamaAdapter,
-            'minimax': MiniMaxAdapter,
+            'grok': GrokAdapter,
             'opencode': OpenCodeAdapter,
         }
 
@@ -901,6 +853,8 @@ class Agent(models.Model):
             _logger.info('Got models: %s', models)
             status = 'success'
             message = _('Connected successfully! %d models available.') % len(models)
+            if self.provider == 'anthropic':
+                message += _('\n⚠️ Anthropic has no model-list API — this list is built-in. Start a chat to verify your API key.')
             model_list = '\n'.join(models) if models else ''
         except Exception as e:
             _logger.error('Connection test failed: %s', str(e), exc_info=True)
@@ -935,7 +889,7 @@ class Agent(models.Model):
         if not self.provider:
             raise UserError(_('Please select a provider first.'))
 
-        if not self.api_key:
+        if not self.api_key and self.provider != 'ollama':
             raise UserError(_('Please enter an API key first.'))
 
         try:
@@ -945,16 +899,20 @@ class Agent(models.Model):
             if not models:
                 raise UserError(_('No models found. Please check your API key.'))
 
-            # Store available models in a config parameter
-            key = f'mcp.available_models.{self.provider}'
-            self.env['ir.config_parameter'].set_param(key, ','.join(models))
+            # Upsert discovered models into mcp.model.option
+            ModelOption = self.env['mcp.model.option']
+            for m in models:
+                if not ModelOption.search([('provider', '=', self.provider), ('name', '=', m)], limit=1):
+                    ModelOption.create({'provider': self.provider, 'name': m, 'is_discovered': True})
 
             # Auto-select first available model
-            if models:
-                self.model_name = models[0]
-                _logger.info('Set model_name to: %s (available: %s)', models[0], models)
+            self.model_name = models[0]
+            first = ModelOption.search(
+                [('provider', '=', self.provider), ('name', '=', models[0])], limit=1
+            )
+            self.model_selection = first
+            _logger.info('Set model_name to: %s (available: %s)', models[0], models)
 
-            # Show success notification
             return {
                 'type': 'ir.actions.client',
                 'tag': 'display_notification',
@@ -968,23 +926,6 @@ class Agent(models.Model):
         except Exception as e:
             _logger.error('Failed to fetch models: %s', str(e))
             raise UserError(_('Failed to fetch models: %s') % str(e))
-
-    def _get_model_selection(self):
-        """Get available models based on provider."""
-        self.ensure_one()
-        key = f'mcp.available_models.{self.provider}'
-        models_str = self.env['ir.config_parameter'].get_param(key, '')
-        if models_str:
-            return [(m, m) for m in models_str.split(',')]
-        # Default fallback models
-        defaults = {
-            'anthropic': [('claude-sonnet-4-6', 'Claude Sonnet 4-6'), ('claude-3-5-sonnet-20241022', 'Claude 3.5 Sonnet')],
-            'openai': [('gpt-4o', 'GPT-4o'), ('gpt-4o-mini', 'GPT-4o Mini')],
-            'gemini': [('gemini-2.0-flash', 'Gemini 2.0 Flash'), ('gemini-1.5-flash', 'Gemini 1.5 Flash')],
-            'ollama': [('llama3.1', 'Llama 3.1'), ('mistral', 'Mistral')],
-            'minimax': [('abab6.5s-chat', 'abab6.5s-chat')],
-        }
-        return defaults.get(self.provider, [])
 
     def action_open_chat(self):
         """

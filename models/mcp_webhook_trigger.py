@@ -111,6 +111,16 @@ class WebhookTrigger(models.Model):
         help=_('Jinja2 template with {record} variable. E.g., "New lead: {record.name}"'),
     )
 
+    # ── Outbound (Odoo → n8n/Zapier) ────────────────────────────────
+    outbound_url = fields.Char(
+        string=_('Outbound URL'),
+        help=_('Paste your n8n/Zapier webhook URL here. Odoo will POST the result to this URL after the AI runs.'),
+    )
+    outbound_secret = fields.Char(
+        string=_('Outbound Secret'),
+        help=_('Optional: sent as Authorization: Bearer <secret> header'),
+    )
+
     # ── Token & Audit ───────────────────────────────────────────────
     token = fields.Char(
         string=_('Webhook Token'),
@@ -239,37 +249,70 @@ class WebhookTrigger(models.Model):
         """
         from ..mcp.gateway import McpGateway
 
-        if record._name != self.trigger_model:
+        if record is not None and record._name != self.trigger_model:
             raise exceptions.ValidationError(
                 _('Model mismatch: webhook trigger expects %s, got %s')
                 % (self.trigger_model, record._name)
             )
 
         try:
-            message = self._get_message(record)
-            session = self.env['mcp.session'].create({
+            message = self._get_message(record) if record is not None else self.message_template
+            session_vals = {
                 'agent_id': self.agent_id.id,
                 'user_id': self.env.user.id,
                 'source': 'webhook',
-                'trigger_model': record._name,
-                'trigger_res_id': record.id,
-                'metadata': '{}',  # TODO: add IP, user-agent
-            })
+                'metadata': '{}',
+            }
+            if record is not None:
+                session_vals['trigger_model'] = record._name
+                session_vals['trigger_res_id'] = record.id
+            session = self.env['mcp.session'].create(session_vals)
 
             gateway = McpGateway(self.env, self.env.user)
-            result = gateway.run(
-                agent_id=self.agent_id.id,
-                user_message=message,
-                session_id=session.id,
-                active_model=record._name,
-                active_id=record.id,
-            )
+            run_kwargs = {
+                'agent_id': self.agent_id.id,
+                'user_message': message,
+                'session_id': session.id,
+            }
+            if record is not None:
+                run_kwargs['active_model'] = record._name
+                run_kwargs['active_id'] = record.id
+            result = gateway.run(**run_kwargs)
 
-            # Increment counter
             self.trigger_count += 1
             self.last_triggered = fields.Datetime.now()
+
+            if self.outbound_url:
+                self._call_outbound(record, result)
 
             return result
         except Exception as e:
             _logger.error('Webhook trigger failed: %s', str(e))
             raise UserError(_('Webhook invocation failed: %s') % str(e))
+
+    def _call_outbound(self, record, ai_result):
+        import requests as _requests
+        payload = {
+            'trigger': self.name,
+            'model': record._name if record else None,
+            'record_id': record.id if record else None,
+            'ai_reply': ai_result.get('reply', ''),
+            'session_id': ai_result.get('session_id'),
+        }
+        if record:
+            # Send basic readable fields only (skip binaries/computed)
+            safe_fields = [
+                f for f, fd in record._fields.items()
+                if not fd.compute and fd.type not in ('binary',)
+            ]
+            try:
+                payload['record_data'] = record.read(safe_fields[:20])[0]
+            except Exception:
+                pass
+        headers = {'Content-Type': 'application/json'}
+        if self.outbound_secret:
+            headers['Authorization'] = f'Bearer {self.outbound_secret}'
+        try:
+            _requests.post(self.outbound_url, json=payload, timeout=10)
+        except Exception as e:
+            _logger.warning('Outbound webhook call to %s failed: %s', self.outbound_url, e)

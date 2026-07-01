@@ -185,6 +185,27 @@
                 <!-- Input Area -->
                 <div class="mcp-input-area" t-if="state.selectedAgent">
                     <div class="mcp-input-inner">
+
+                        <!-- Prompt Templates Panel -->
+                        <div class="mcp-templates-panel" t-if="state.showTemplates and state.templates.length">
+                            <div class="mcp-templates-header">
+                                <span>Prompt Templates</span>
+                                <button class="mcp-templates-close" t-on-click="toggleTemplates"><i class="fa fa-times"/></button>
+                            </div>
+                            <t t-foreach="['task', 'analysis', 'report', 'greeting']" t-as="cat" t-key="cat">
+                                <t t-set="catItems" t-value="state.templates.filter(t => t.category === cat)"/>
+                                <t t-if="catItems.length">
+                                    <div class="mcp-template-category-label" t-esc="cat.toUpperCase()"/>
+                                    <t t-foreach="catItems" t-as="tpl" t-key="tpl.id">
+                                        <button class="mcp-template-item" t-on-click="() => this.insertTemplate(tpl)">
+                                            <span class="mcp-template-name" t-esc="tpl.name"/>
+                                            <span class="mcp-template-vars" t-if="tpl.variables" t-esc="tpl.variables"/>
+                                        </button>
+                                    </t>
+                                </t>
+                            </t>
+                        </div>
+
                         <div class="mcp-input-wrapper">
                             <textarea
                                 class="mcp-message-input"
@@ -202,11 +223,19 @@
                             </t>
 
                             <div class="mcp-input-footer">
-                                <button class="mcp-attach-btn" t-on-click="onAttachClick" title="Attach file" t-att-disabled="state.loading">
-                                    <i class="fa fa-paperclip"/>
-                                </button>
-                                <input type="file" class="d-none" t-ref="fileInput" t-on-change="onFileChange"/>
-
+                                <div class="d-flex align-items-end">
+                                    <button class="mcp-attach-btn" t-on-click="onAttachClick" title="Attach file" t-att-disabled="state.loading">
+                                        <i class="fa fa-paperclip"/>
+                                    </button>
+                                    <input type="file" class="d-none" t-ref="fileInput" t-on-change="onFileChange"/>
+                                    <button class="mcp-templates-btn"
+                                            t-att-class="state.showTemplates ? 'active' : ''"
+                                            t-on-click="toggleTemplates"
+                                            title="Prompt Templates"
+                                            t-if="state.templates.length">
+                                        <i class="fa fa-magic"/>
+                                    </button>
+                                </div>
                                 <button
                                     class="mcp-send-btn"
                                     t-on-click="sendMessage"

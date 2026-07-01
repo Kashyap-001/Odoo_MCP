@@ -38,13 +38,10 @@ mcp_connection_test_wizard_employee,mcp_connection_test_wizard_employee,model_mc
 mcp_external_server_user,mcp_external_server_user,model_mcp_external_server,group_mcp_user,1,0,0,0
 mcp_external_server_manager,mcp_external_server_manager,model_mcp_external_server,group_mcp_manager,1,1,1,0
 mcp_external_server_admin,mcp_external_server_admin,model_mcp_external_server,group_mcp_admin,1,1,1,1
-mcp_issue_user,mcp_issue_user,model_mcp_issue,group_mcp_user,1,0,0,0
-mcp_issue_manager,mcp_issue_manager,model_mcp_issue,group_mcp_manager,1,1,1,0
-mcp_issue_admin,mcp_issue_admin,model_mcp_issue,group_mcp_admin,1,1,1,1
-mcp_issue_tag_user,mcp_issue_tag_user,model_mcp_issue_tag,group_mcp_user,1,0,0,0
-mcp_issue_tag_manager,mcp_issue_tag_manager,model_mcp_issue_tag,group_mcp_manager,1,1,1,0
-mcp_issue_tag_admin,mcp_issue_tag_admin,model_mcp_issue_tag,group_mcp_admin,1,1,1,1
 mcp_echart_user,mcp_echart_user,model_mcp_echart,group_mcp_user,1,0,0,0
 mcp_echart_manager,mcp_echart_manager,model_mcp_echart,group_mcp_manager,1,1,1,0
 mcp_echart_admin,mcp_echart_admin,model_mcp_echart,group_mcp_admin,1,1,1,1
+mcp_model_option_user,mcp.model.option user,model_mcp_model_option,mcp_gateway.group_mcp_user,1,0,0,0
+mcp_model_option_manager,mcp.model.option manager,model_mcp_model_option,mcp_gateway.group_mcp_manager,1,1,1,0
+mcp_model_option_admin,mcp.model.option admin,model_mcp_model_option,mcp_gateway.group_mcp_admin,1,1,1,1
 
