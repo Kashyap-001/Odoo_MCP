@@ -242,7 +242,7 @@ class OpenCodeAdapter(AbstractProvider):
 
             _logger.info('Calling OpenCode with model: %s, endpoint: %s', agent.model_name, endpoint)
 
-            with httpx.Client(timeout=60.0) as client:
+            with httpx.Client(timeout=120.0) as client:
                 response = client.post(url, headers=headers, json=payload)
 
             _logger.info('OpenCode response: status=%s, body=%s', response.status_code, response.text[:500])
