@@ -621,9 +621,22 @@ IMAGE FIELDS: When search_read returns image_1920, image_128, etc., the value is
 
         assistant_text = response.get('text', '') if response else ''
         if assistant_text:
+            cleaned = assistant_text.strip()
+            if cleaned.startswith('```'):
+                lines = cleaned.split('\n')
+                if lines[0].startswith('```'):
+                    lines = lines[1:]
+                if lines and lines[-1].strip() == '```':
+                    lines = lines[:-1]
+                cleaned = '\n'.join(lines).strip()
+            assistant_text = cleaned
+
             brace_idx = assistant_text.find('{"_type":')
-            if brace_idx > 0:
+            if brace_idx >= 0:
                 assistant_text = assistant_text[brace_idx:]
+                rbrace_idx = assistant_text.rfind('}')
+                if rbrace_idx > 0:
+                    assistant_text = assistant_text[:rbrace_idx + 1]
         input_tokens = total_input
         output_tokens = total_output
 
