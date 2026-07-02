@@ -816,7 +816,7 @@ class ToolDispatcher:
         }
         # Wrap in a function so multi-line code with assignments works.
         # _safe_exec handles the AST return-insertion and mode='exec' boilerplate.
-        return _make_serializable(_safe_exec(stripped, eval_context, '_orm_fn'))
+        return _make_serializable(_safe_exec(code, eval_context, '_orm_fn'))
 
     def _dispatch_create_echart(self, arguments, env, user):
         name = arguments['name']
