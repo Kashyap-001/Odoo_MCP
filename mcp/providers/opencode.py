@@ -394,11 +394,12 @@ class OpenCodeAdapter(AbstractProvider):
         # Organized by format: Anthropic (/v1/messages), OpenAI (/v1/responses), OpenAI-compatible (/v1/chat/completions)
         return [
             # Free models
-            'minimax-m2.5-free',
+            'mimo-v2.5-free',
             'deepseek-v4-flash-free',
             'big-pickle',
             'ring-2.6-1t-free',
-            'nemotron-3-super-free',
+            'nemotron-3-ultra-free',
+            'north-mini-code-free',
             # MiniMax (OpenAI-compatible /v1/chat/completions)
             'minimax-m2.7',
             'minimax-m2.5',

@@ -126,7 +126,7 @@
     <!-- OpenCode Zen — proxied models via opencode.ai -->
     <record id="model_opencode_minimax_m25_free" model="mcp.model.option">
         <field name="provider">opencode</field>
-        <field name="name">minimax-m2.5-free</field>
+        <field name="name">mimo-v2.5-free</field>
     </record>
     <record id="model_opencode_deepseek_v4_flash_free" model="mcp.model.option">
         <field name="provider">opencode</field>
@@ -142,7 +142,11 @@
     </record>
     <record id="model_opencode_nemotron_3_super_free" model="mcp.model.option">
         <field name="provider">opencode</field>
-        <field name="name">nemotron-3-super-free</field>
+        <field name="name">nemotron-3-ultra-free</field>
+    </record>
+    <record id="model_opencode_north_mini_code_free" model="mcp.model.option">
+        <field name="provider">opencode</field>
+        <field name="name">north-mini-code-free</field>
     </record>
     <record id="model_opencode_minimax_m27" model="mcp.model.option">
         <field name="provider">opencode</field>
