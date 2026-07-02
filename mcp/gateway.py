@@ -1450,8 +1450,10 @@ NEVER use xAxis.data or series.data — always use dataset.source.
                 tool_name = tool_call['name']
                 arguments = tool_call['arguments']
                 tool_call_id = tool_call.get('id') or f'tc_{turn}_{i}'
-                # Normalize stuck-detection key for search-type tools so varying args still count
-                _args_dict = json.loads(arguments) if isinstance(arguments, str) else (arguments or {})
+                try:
+                    _args_dict = json.loads(arguments) if isinstance(arguments, str) else (arguments or {})
+                except Exception:
+                    _args_dict = {}
                 if tool_name == 'get_model_schema':
                     _args_key = (tool_name, json.dumps({'model': _args_dict.get('model', '')}, sort_keys=True))
                 else:
