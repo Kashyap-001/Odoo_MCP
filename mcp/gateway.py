@@ -1535,8 +1535,9 @@ NEVER use xAxis.data or series.data — always use dataset.source.
                             'tool_call_id': tool_call_id,
                         })
                         # Return the error as the final response instead of continuing loop
+                        error_msg = f"Tool execution failed: {result_data.get('error', 'Unknown error')}. {result_data.get('message', '')}"
                         return {
-                            'text': f"Tool execution failed: {result_data.get('error', 'Unknown error')}. {result_data.get('message', '')}",
+                            'text': json.dumps({'_type': 'error', 'content': error_msg.strip()}),
                             'tool_calls': [],
                         }, [], total_tool_calls, total_input, total_output, tool_name
                 except (json.JSONDecodeError, TypeError):
