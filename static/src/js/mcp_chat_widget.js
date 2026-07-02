@@ -81,7 +81,7 @@ export class ChatWidget extends Component {
         const sessionIds = sessions.map(s => s.id);
         const lastMessages = await this.orm.searchRead(
             "mcp.session.message",
-            [["session_id", "in", sessionIds], ["role", "in", ["user", "assistant", "tool_result"]]],
+            [["session_id", "in", sessionIds], ["role", "in", ["user", "assistant"]]],
             ["session_id", "role", "content"],
             { order: "create_date desc", limit: 60 }
         );
@@ -213,7 +213,7 @@ export class ChatWidget extends Component {
     async loadSessionMessages(sessionId) {
         const messages = await this.orm.searchRead(
             "mcp.session.message",
-            [["session_id", "=", sessionId], ["role", "in", ["user", "assistant", "tool_result"]]],
+            [["session_id", "=", sessionId], ["role", "in", ["user", "assistant"]]],
             ["role", "content", "tool_name", "create_date"],
             { order: "create_date asc" }
         );
