@@ -81,7 +81,7 @@ export class ChatWidget extends Component {
         const sessionIds = sessions.map(s => s.id);
         const lastMessages = await this.orm.searchRead(
             "mcp.session.message",
-            [["session_id", "in", sessionIds], ["role", "in", ["user", "assistant"]]],
+            [["session_id", "in", sessionIds], ["role", "in", ["user", "assistant", "tool_result"]]],
             ["session_id", "role", "content"],
             { order: "create_date desc", limit: 60 }
         );
@@ -210,6 +210,23 @@ export class ChatWidget extends Component {
         this.state.showTemplates = false;
     }
 
+    async loadSessionMessages(sessionId) {
+        const messages = await this.orm.searchRead(
+            "mcp.session.message",
+            [["session_id", "=", sessionId], ["role", "in", ["user", "assistant", "tool_result"]]],
+            ["role", "content", "tool_name", "create_date"],
+            { order: "create_date asc" }
+        );
+        this.state.messages = messages.map(msg => {
+            if (msg.role === 'user') {
+                const { cleanContent, attachmentChip } = this._parseUserMessage(msg.content);
+                return { ...msg, content: cleanContent, attachmentChip };
+            }
+            const { parsedContent, structuredData } = this._parseContent(msg.content);
+            return { ...msg, content: parsedContent, structuredData };
+        });
+    }
+
     async selectSession(session) {
         this._sendSeq++;
         this.state.loading = true;
@@ -219,20 +236,7 @@ export class ChatWidget extends Component {
             this.state.sessionId = session.id;
             this.loadTemplates(session.agent_id[0]);
 
-            const messages = await this.orm.searchRead(
-                "mcp.session.message",
-                [["session_id", "=", session.id], ["role", "in", ["user", "assistant"]]],
-                ["role", "content", "tool_name", "create_date"],
-                { order: "create_date asc" }
-            );
-            this.state.messages = messages.map(msg => {
-                if (msg.role === 'user') {
-                    const { cleanContent, attachmentChip } = this._parseUserMessage(msg.content);
-                    return { ...msg, content: cleanContent, attachmentChip };
-                }
-                const { parsedContent, structuredData } = this._parseContent(msg.content);
-                return { ...msg, content: parsedContent, structuredData };
-            });
+            await this.loadSessionMessages(session.id);
 
             const sessionData = await this.orm.read("mcp.session", [session.id], ["input_tokens", "output_tokens", "estimated_cost_usd"]);
             if (sessionData.length > 0) {
@@ -433,14 +437,9 @@ export class ChatWidget extends Component {
             }
 
             const result = response.data;
-            const { parsedContent, structuredData } = this._parseContent(result.reply);
-            this.state.messages.push({
-                role: "assistant",
-                content: parsedContent,
-                structuredData: structuredData,
-            });
-
             this.state.sessionId = result.session_id;
+            await this.loadSessionMessages(result.session_id);
+
             this.state.totalTokens += result.input_tokens + result.output_tokens;
             this.state.estimatedCost += result.cost_usd;
 

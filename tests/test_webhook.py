@@ -33,7 +33,6 @@ class TestWebhookTrigger(TransactionCase):
         """Test webhook trigger record creation."""
         webhook = self.env['mcp.webhook.trigger'].create({
             'name': 'New Tag Webhook',
-            'trigger_model': 'res.partner.category',
             'agent_id': self.agent.id,
             'description': 'Triggers when new tag created',
             'message_template': 'New tag created: {record.name}',
@@ -47,14 +46,12 @@ class TestWebhookTrigger(TransactionCase):
         """Test webhook tokens are unique."""
         webhook1 = self.env['mcp.webhook.trigger'].create({
             'name': 'Webhook 1',
-            'trigger_model': 'res.partner.category',
             'agent_id': self.agent.id,
             'message_template': 'Test 1: {record.name}',
         })
 
         webhook2 = self.env['mcp.webhook.trigger'].create({
             'name': 'Webhook 2',
-            'trigger_model': 'res.partner.category',
             'agent_id': self.agent.id,
             'message_template': 'Test 2: {record.name}',
         })
@@ -71,7 +68,6 @@ class TestWebhookTrigger(TransactionCase):
 
         webhook = self.env['mcp.webhook.trigger'].create({
             'name': 'Test Webhook',
-            'trigger_model': 'res.partner.category',
             'agent_id': self.agent.id,
             'message_template': 'Test fire: {record.name}',
         })
@@ -90,27 +86,12 @@ class TestWebhookTrigger(TransactionCase):
         """Test inactive webhooks don't fire."""
         webhook = self.env['mcp.webhook.trigger'].create({
             'name': 'Inactive Webhook',
-            'trigger_model': 'res.partner.category',
             'agent_id': self.agent.id,
             'active': False,
             'message_template': 'Inactive: {record.name}',
         })
 
         self.assertFalse(webhook.active)
-
-    def test_webhook_model_mismatch(self):
-        """Test webhook rejects mismatched models."""
-        webhook = self.env['mcp.webhook.trigger'].create({
-            'name': 'Tag Webhook',
-            'trigger_model': 'res.partner.category',
-            'agent_id': self.agent.id,
-            'message_template': 'Mismatch: {record.name}',
-        })
-
-        # Try to fire with wrong model (using self.agent which is mcp.agent, not res.partner.category)
-        # Should raise UserError
-        with self.assertRaises(UserError):
-            webhook.fire(self.agent)
 
 
 class TestWebhookSecurity(TransactionCase):
@@ -129,7 +110,6 @@ class TestWebhookSecurity(TransactionCase):
         """Test webhook token validation on fire."""
         webhook = self.env['mcp.webhook.trigger'].create({
             'name': 'Secure Webhook',
-            'trigger_model': 'res.partner.category',
             'agent_id': self.agent.id,
             'message_template': 'Secure: {record.name}',
         })
@@ -146,7 +126,6 @@ class TestWebhookSecurity(TransactionCase):
         """Test disabled webhooks aren't found."""
         webhook = self.env['mcp.webhook.trigger'].create({
             'name': 'Disabled Webhook',
-            'trigger_model': 'res.partner.category',
             'agent_id': self.agent.id,
             'active': False,
             'message_template': 'Disabled: {record.name}',
