@@ -2,6 +2,8 @@ import { Component, useState, useRef, onMounted, markup } from "@odoo/owl";
 import { rpc } from "@web/core/network/rpc";
 import { useService } from "@web/core/utils/hooks";
 import { user } from "@web/core/user";
+import { Dropdown } from "@web/core/dropdown/dropdown";
+import { DropdownItem } from "@web/core/dropdown/dropdown_item";
 
 export class ChatWidget extends Component {
     static template = "mcp_gateway.ChatWidget";
@@ -22,9 +24,12 @@ export class ChatWidget extends Component {
             pendingFile: null,
             templates: [],
             showTemplates: false,
+            searchQuery: "",
+            searchResults: null,
         });
 
         this._sendSeq = 0;
+        this._searchTimer = null;
 
         this.messageInput = useRef("messageInput");
         this.fileInput = useRef("fileInput");
@@ -63,34 +68,67 @@ export class ChatWidget extends Component {
                 ["id", "name", "agent_id", "create_date", "state", "is_pinned"],
                 { limit: 20, order: "create_date desc" }
             );
-
-            if (sessions.length > 0) {
-                const sessionIds = sessions.map(s => s.id);
-                const lastMessages = await this.orm.searchRead(
-                    "mcp.session.message",
-                    [["session_id", "in", sessionIds], ["role", "in", ["user", "assistant"]]],
-                    ["session_id", "role", "content"],
-                    { order: "create_date desc", limit: 60 }
-                );
-                const msgMap = {};
-                for (const msg of lastMessages) {
-                    const sid = msg.session_id[0];
-                    if (!msgMap[sid]) {
-                        const text = msg.content || '';
-                        const isStructured = text.charAt(0) === '{' && (text.includes('"_type"') || text.includes('"_is_structured"'));
-                        msgMap[sid] = isStructured
-                            ? '[Tool result]'
-                            : text.substring(0, 60) + (text.length > 60 ? '…' : '');
-                    }
-                }
-                this.state.recentSessions = sessions
-                    .filter(s => msgMap[s.id])
-                    .map(s => ({ ...s, lastMessage: msgMap[s.id] }));
-            } else {
-                this.state.recentSessions = sessions;
-            }
+            this.state.recentSessions = await this._attachPreviews(sessions);
         } catch (error) {
             console.error("MCP: Failed to load sessions", error);
+        }
+    }
+
+    async _attachPreviews(sessions) {
+        if (sessions.length === 0) {
+            return sessions;
+        }
+        const sessionIds = sessions.map(s => s.id);
+        const lastMessages = await this.orm.searchRead(
+            "mcp.session.message",
+            [["session_id", "in", sessionIds], ["role", "in", ["user", "assistant"]]],
+            ["session_id", "role", "content"],
+            { order: "create_date desc", limit: 60 }
+        );
+        const msgMap = {};
+        for (const msg of lastMessages) {
+            const sid = msg.session_id[0];
+            if (!msgMap[sid]) {
+                const text = msg.content || '';
+                const isStructured = text.charAt(0) === '{' && (text.includes('"_type"') || text.includes('"_is_structured"'));
+                msgMap[sid] = isStructured
+                    ? '[Tool result]'
+                    : text.substring(0, 60) + (text.length > 60 ? '…' : '');
+            }
+        }
+        return sessions
+            .filter(s => msgMap[s.id])
+            .map(s => ({ ...s, lastMessage: msgMap[s.id] }));
+    }
+
+    onSessionSearchInput(ev) {
+        const query = ev.target.value;
+        this.state.searchQuery = query;
+        clearTimeout(this._searchTimer);
+        this._searchTimer = setTimeout(() => this.searchSessions(query.trim()), 300);
+    }
+
+    clearSessionSearch() {
+        this.state.searchQuery = "";
+        this.state.searchResults = null;
+        clearTimeout(this._searchTimer);
+    }
+
+    async searchSessions(query) {
+        if (!query) {
+            this.state.searchResults = null;
+            return;
+        }
+        try {
+            const sessions = await this.orm.searchRead(
+                "mcp.session",
+                ["&", ["user_id", "=", user.userId], "|", ["name", "ilike", query], ["session_message_ids.content", "ilike", query]],
+                ["id", "name", "agent_id", "create_date", "state", "is_pinned"],
+                { order: "create_date desc", limit: 50 }
+            );
+            this.state.searchResults = await this._attachPreviews(sessions);
+        } catch (error) {
+            console.error("MCP: Failed to search sessions", error);
         }
     }
 
@@ -103,7 +141,8 @@ export class ChatWidget extends Component {
 
     get sessionsByAgent() {
         const groups = {};
-        for (const session of this.state.recentSessions) {
+        const sessions = this.state.searchResults ?? this.state.recentSessions;
+        for (const session of sessions) {
             const agentId = Array.isArray(session.agent_id) ? session.agent_id[0] : session.agent_id;
             const agentName = Array.isArray(session.agent_id) ? session.agent_id[1] : 'Unknown Agent';
             if (!groups[agentId]) {
@@ -213,10 +252,60 @@ export class ChatWidget extends Component {
             const newPinned = !session.is_pinned;
             await this.orm.write("mcp.session", [session.id], { is_pinned: newPinned });
             session.is_pinned = newPinned;
-            // Force rendering refresh
-            this.state.recentSessions = [...this.state.recentSessions];
+            this._refreshSessionLists();
         } catch (error) {
             console.error("MCP: Failed to pin/unpin session", error);
+        }
+    }
+
+    async renameSession(session) {
+        const newName = window.prompt("Rename session", session.name);
+        if (!newName || newName === session.name) {
+            return;
+        }
+        try {
+            await this.orm.write("mcp.session", [session.id], { name: newName });
+            session.name = newName;
+            this._refreshSessionLists();
+        } catch (error) {
+            console.error("MCP: Failed to rename session", error);
+        }
+    }
+
+    async exportSession(session) {
+        try {
+            const action = await this.orm.call("mcp.session", "action_export_transcript", [session.id]);
+            this.actionService.doAction(action);
+        } catch (error) {
+            console.error("MCP: Failed to export session", error);
+        }
+    }
+
+    async deleteSession(session) {
+        if (!window.confirm(`Delete "${session.name}"? This cannot be undone.`)) {
+            return;
+        }
+        try {
+            await this.orm.unlink("mcp.session", [session.id]);
+            this.state.recentSessions = this.state.recentSessions.filter(s => s.id !== session.id);
+            if (this.state.searchResults) {
+                this.state.searchResults = this.state.searchResults.filter(s => s.id !== session.id);
+            }
+            if (this.state.sessionId === session.id) {
+                this.state.sessionId = null;
+                this.state.messages = [];
+            }
+        } catch (error) {
+            console.error("MCP: Failed to delete session", error);
+        }
+    }
+
+    // Force rerender of session lists after an in-place mutation (OWL reactivity
+    // doesn't pick up writes to nested object properties).
+    _refreshSessionLists() {
+        this.state.recentSessions = [...this.state.recentSessions];
+        if (this.state.searchResults) {
+            this.state.searchResults = [...this.state.searchResults];
         }
     }
 
@@ -884,7 +973,7 @@ export class MessageBubble extends Component {
     static props = ["message"];
 }
 
-ChatWidget.components = { MessageBubble };
+ChatWidget.components = { MessageBubble, Dropdown, DropdownItem };
 
 import { registry } from "@web/core/registry";
 registry.category("actions").add("mcp_gateway.chat", ChatWidget);

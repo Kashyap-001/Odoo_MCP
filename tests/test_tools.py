@@ -291,6 +291,30 @@ class TestToolDispatcherErrors(TransactionCase):
         self.assertFalse(result_data['success'])
         self.assertIn('error', result_data)
 
+    def test_search_read_rejects_non_stored_field_domain(self):
+        """Non-stored computed field in domain must fail loud, not silently drop the filter."""
+        # _dispatch_odoo routes by tool.name matching literal built-in names
+        # (e.g. 'search_read') — NOT by tool.odoo_method — so this must reuse
+        # the real seeded tool_search_read record rather than create a second
+        # tool named 'search_read' (which would both violate the unique
+        # constraint against the seeded data AND, if renamed to dodge that,
+        # silently stop routing through _dispatch_search_read at all).
+        tool = self.env.ref('mcp_gateway.tool_search_read')
+        # Use a field defined by mcp_gateway itself (mcp.echart.public_url,
+        # compute='_compute_public_url', store=False) rather than one from an
+        # unrelated module like `sale` — this test runs during mcp_gateway's
+        # OWN module-load step under Odoo's real test runner, before modules
+        # that load later in the dependency graph are necessarily registered,
+        # so a field from an external module can resolve to None here even
+        # when genuinely installed (order-dependent flake, not a real gap).
+        arguments = {'model': 'mcp.echart', 'domain': [['public_url', '=', 'x']], 'fields': ['name']}
+
+        result = self.dispatcher.dispatch(tool, arguments, self.env, self.env.user)
+        result_data = json.loads(result)
+
+        self.assertFalse(result_data['success'])
+        self.assertIn('non-stored', result_data['error'].lower())
+
     @mock.patch('requests.post')
     def test_external_tool_connection_error(self, mock_post):
         """Test external tool connection error returns error dict."""

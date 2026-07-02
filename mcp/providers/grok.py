@@ -7,7 +7,7 @@ from odoo.exceptions import UserError
 _logger = logging.getLogger(__name__)
 
 _GROK_BASE_URL = 'https://api.x.ai/v1'
-_GROK_FALLBACK_MODELS = ['grok-3', 'grok-3-mini', 'grok-2', 'grok-beta']
+_GROK_FALLBACK_MODELS = ['grok-4.3', 'grok-4.20-0309-reasoning', 'grok-4.20-0309-non-reasoning', 'grok-build-0.1']
 
 
 class GrokAdapter(AbstractProvider):
@@ -90,10 +90,12 @@ class GrokAdapter(AbstractProvider):
 
         except Exception as e:
             error_str = str(e)
-            if 'authentication' in error_str.lower() or 'api key' in error_str.lower() or '401' in error_str:
+            if '401' in error_str or ('authentication' in error_str.lower() and '400' not in error_str):
                 raise UserError(_('Invalid Grok API key. Please check your API key at console.x.ai.'))
             elif 'rate_limit' in error_str.lower() or '429' in error_str:
                 raise UserError(_('Grok rate limit exceeded. Please try again later.'))
+            elif '400' in error_str:
+                raise UserError(_('Grok API rejected the request (400). Check your model name — "%s" may not be available on your plan. Try grok-2 or grok-beta.') % agent.model_name)
             else:
                 _logger.error('Grok call failed: %s', error_str)
                 raise UserError(_('Grok API error: %s') % error_str)
@@ -112,3 +114,26 @@ class GrokAdapter(AbstractProvider):
         except Exception as e:
             _logger.warning('Failed to fetch Grok models: %s', str(e))
             return _GROK_FALLBACK_MODELS
+
+    def format_tool_calls(self, tool_calls: list) -> list:
+        """Uses OpenAI format: tool_calls list with id/type/function keys."""
+        import json as _json
+        return [
+            {
+                'id': tc.get('id', f'tc_{i}'),
+                'type': 'function',
+                'function': {
+                    'name': tc.get('name', ''),
+                    'arguments': (
+                        tc.get('arguments', '{}')
+                        if isinstance(tc.get('arguments'), str)
+                        else _json.dumps(tc.get('arguments', {}))
+                    ),
+                }
+            }
+            for i, tc in enumerate(tool_calls)
+        ]
+
+    def format_tool_result(self, tool_call_id: str, tool_name: str, result: str) -> dict:
+        """Uses OpenAI format: role=tool message with tool_call_id."""
+        return {'role': 'tool', 'tool_call_id': tool_call_id, 'content': result}

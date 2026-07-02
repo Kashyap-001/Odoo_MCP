@@ -62,7 +62,6 @@ Multiple rules are merged with **OR logic** — if a user matches more than one 
 | post_message, upload_attachment, set_binary_field | Write | **Yes** |
 | import_from_file | Write | **Yes** |
 | execute_method, execute_orm | Advanced/Sandbox | **Yes** |
-| code_search, code_read | Code Inspection | No |
 | create_echart, ai_agent_query | Advanced | Yes |
 
 Recommended policy: give **Users** only the Read-only tools. Give **Managers** everything. Reserve `execute_orm` and `execute_method` for admins or trusted users.

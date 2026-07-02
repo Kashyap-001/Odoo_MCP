@@ -235,3 +235,26 @@ class OllamaAdapter(AbstractProvider):
         except Exception as e:
             _logger.error('Ollama call failed: %s', str(e))
             raise UserError(_('Ollama provider error: %s') % str(e))
+
+    def format_tool_calls(self, tool_calls: list) -> list:
+        """Uses OpenAI format: tool_calls list with id/type/function keys."""
+        import json as _json
+        return [
+            {
+                'id': tc.get('id', f'tc_{i}'),
+                'type': 'function',
+                'function': {
+                    'name': tc.get('name', ''),
+                    'arguments': (
+                        tc.get('arguments', '{}')
+                        if isinstance(tc.get('arguments'), str)
+                        else _json.dumps(tc.get('arguments', {}))
+                    ),
+                }
+            }
+            for i, tc in enumerate(tool_calls)
+        ]
+
+    def format_tool_result(self, tool_call_id: str, tool_name: str, result: str) -> dict:
+        """Uses OpenAI format: role=tool message with tool_call_id."""
+        return {'role': 'tool', 'tool_call_id': tool_call_id, 'content': result}

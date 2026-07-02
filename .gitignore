@@ -10,8 +10,11 @@ __pycache__/
 *.pot
 
 # Vault symlinks (link-brain.sh artifacts — don't commit the brain)
-.agents/
-.agy/
+# No trailing slash: .agents and .agy are SYMLINKS to the vault, and git's
+# dir-only (trailing-slash) gitignore patterns don't match symlinks even when
+# the target is a directory — they'd show as untracked despite this rule.
+.agents
+.agy
 HANDOFF.md
 
 # Secrets
@@ -22,7 +25,11 @@ HANDOFF.md
 # Local AI config (machine-specific, not for repo)
 .claude/
 .claudecoderc
-.agy/
+.cursorrules
+GEMINI.md
+
+# Throwaway debug scratch work
+scratch/
 
 # Editor
 .vscode/

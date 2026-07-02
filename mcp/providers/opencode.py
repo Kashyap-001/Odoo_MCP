@@ -194,7 +194,7 @@ class OpenCodeAdapter(AbstractProvider):
             _logger.error('OpenCode response parse error: %s', str(e))
             raise UserError(_('Failed to parse OpenCode response: %s') % str(e))
 
-    def call(self, agent, messages: list, tool_specs: list = None) -> dict:
+    def call(self, agent, messages: list, tool_specs: list) -> dict:
         """
         Call OpenCode API using httpx.
 
@@ -206,7 +206,7 @@ class OpenCodeAdapter(AbstractProvider):
         Args:
             agent: mcp.agent record
             messages: List of message dicts
-            tool_specs: Optional list of tool specifications
+            tool_specs: List of tool specifications
 
         Returns:
             dict: Standardized response
@@ -214,9 +214,6 @@ class OpenCodeAdapter(AbstractProvider):
         Raises:
             UserError: on API errors
         """
-        if tool_specs is None:
-            tool_specs = []
-
         try:
             import httpx
 
@@ -448,3 +445,26 @@ class OpenCodeAdapter(AbstractProvider):
             'gemini-3.1-pro',
             'gemini-3-flash',
         ]
+
+    def format_tool_calls(self, tool_calls: list) -> list:
+        """Uses OpenAI format: tool_calls list with id/type/function keys."""
+        import json as _json
+        return [
+            {
+                'id': tc.get('id', f'tc_{i}'),
+                'type': 'function',
+                'function': {
+                    'name': tc.get('name', ''),
+                    'arguments': (
+                        tc.get('arguments', '{}')
+                        if isinstance(tc.get('arguments'), str)
+                        else _json.dumps(tc.get('arguments', {}))
+                    ),
+                }
+            }
+            for i, tc in enumerate(tool_calls)
+        ]
+
+    def format_tool_result(self, tool_call_id: str, tool_name: str, result: str) -> dict:
+        """Uses OpenAI format: role=tool message with tool_call_id."""
+        return {'role': 'tool', 'tool_call_id': tool_call_id, 'content': result}

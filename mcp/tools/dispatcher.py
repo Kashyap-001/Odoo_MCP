@@ -10,10 +10,12 @@ import logging
 import json
 import re
 import os
-import subprocess
 import requests
 import base64
 import urllib.request as _urllib_req
+import urllib.parse as _urllib_parse
+import socket
+import ipaddress
 import hashlib
 import hmac
 import math
@@ -53,18 +55,6 @@ _safe_io = wrap_module(_io, ['BytesIO', 'StringIO'])
 _safe_xlrd = wrap_module(_xlrd, ['open_workbook', 'xldate_as_datetime'])
 _safe_openpyxl = wrap_module(_openpyxl, ['load_workbook'])
 
-# Module root resolved from __file__ so code tools work on any machine
-_MODULE_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
-# Runtime addons paths — populated by Odoo at startup, correct even when system odoo is importable
-try:
-    import odoo.addons as _odoo_addons_pkg
-    _ODOO_ADDONS_PATHS = list(_odoo_addons_pkg.__path__)
-except Exception:
-    _ODOO_ADDONS_PATHS = []
-
-
-
 # pantalytics: avatar_* auto-redirect to image_1920
 _AVATAR_FIELD_RE = re.compile(r'^avatar_(128|256|512|1024|1920)$')
 
@@ -101,11 +91,88 @@ def _make_serializable(obj):
     return obj
 
 
+def _safe_exec(code: str, context: dict, fn_name: str = '_exec_fn'):
+    """
+    Execute multi-statement Python code inside safe_eval and return its result.
+
+    Wraps `code` in a ``def <fn_name>():`` function so assignments and other
+    statements work (safe_eval defaults to expression-only mode).  Uses AST to
+    detect the last top-level expression and automatically inserts ``return``
+    before it, so callers get the result without having to add ``return``
+    themselves.
+
+    Args:
+        code (str): Python source to execute (may contain assignments, loops, etc.).
+        context (dict): safe_eval globals/locals dict (modified in place by exec).
+        fn_name (str): Name of the wrapper function injected into context.
+
+    Returns:
+        Any: The return value of the last expression in ``code``.
+    """
+    import ast as _ast
+    stripped = code.strip()
+    try:
+        _tree = _ast.parse(stripped)
+        if _tree.body and isinstance(_tree.body[-1], _ast.Expr):
+            _lines = stripped.splitlines()
+            _start = _tree.body[-1].lineno - 1  # 0-indexed
+            _lines[_start] = 'return ' + _lines[_start]
+            stripped = '\n'.join(_lines)
+    except SyntaxError:
+        pass  # safe_eval will surface the real error
+    indented = '\n'.join('    ' + line for line in stripped.splitlines())
+    fn_code = f'def {fn_name}():\n{indented}\n'
+    safe_eval(fn_code, context, mode='exec', nocopy=True)
+    return context[fn_name]()
+
+
+def _assert_public_url(url):
+    """Reject URLs that resolve to internal/loopback/link-local addresses (SSRF guard).
+
+    ponytail: resolve-then-connect has a small DNS-rebinding TOCTOU window (the
+    hostname could re-resolve to a different IP between this check and urlopen).
+    Pinning the checked IP for the actual connection would close it; add if this
+    tool is ever exposed to less-trusted callers than an already-authenticated agent.
+    """
+    parsed = _urllib_parse.urlparse(url)
+    if parsed.scheme not in ('http', 'https'):
+        raise ValueError(f'URL scheme must be http or https, got: {parsed.scheme!r}')
+    if not parsed.hostname:
+        raise ValueError('URL has no hostname')
+    try:
+        addrs = socket.getaddrinfo(parsed.hostname, None)
+    except socket.gaierror as e:
+        raise ValueError(f'Could not resolve host {parsed.hostname!r}: {e}')
+    for family, _type, _proto, _canon, sockaddr in addrs:
+        ip = ipaddress.ip_address(sockaddr[0])
+        if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved or ip.is_multicast or ip.is_unspecified:
+            raise ValueError(f'URL host {parsed.hostname!r} resolves to a non-public address ({ip}) — refusing to fetch')
+
+
 def _normalize_domain(domain):
     # LLMs sometimes double-wrap: [[["f","=","v"]]] → [["f","=","v"]]
     if domain and isinstance(domain[0], list) and domain[0] and isinstance(domain[0][0], list):
         return domain[0]
     return domain
+
+
+def _check_domain_fields(model, domain):
+    # Odoo silently drops (treats as always-true) domain leaves on non-stored
+    # computed fields without a custom search — LLMs then either see unfiltered
+    # results or waste turns retrying the same broken domain. Fail loud instead.
+    for leaf in domain:
+        if not isinstance(leaf, (list, tuple)) or len(leaf) != 3:
+            continue  # skip '&'/'|'/'!' operators
+        fname = leaf[0]
+        if not isinstance(fname, str) or '.' in fname:
+            continue  # skip related/dotted paths
+        field = model._fields.get(fname)
+        if field is not None and not field.store and not field.search:
+            raise ValueError(
+                f"Field '{fname}' on {model._name} is a non-stored computed field and cannot be "
+                f"used in a search domain. Use read_group on the model that stores this data instead "
+                f"(e.g. group sale.order by partner_id rather than filtering res.partner.sale_order_count)."
+            )
 
 
 class ToolDispatcher:
@@ -171,10 +238,6 @@ class ToolDispatcher:
                 result = self._dispatch_delete_record(arguments, env, user)
             elif name == 'execute_method':
                 result = self._dispatch_execute_method(arguments, env, user)
-            elif name == 'code_search':
-                result = self._dispatch_code_search(arguments, env, user)
-            elif name == 'code_read':
-                result = self._dispatch_code_read(arguments, env, user)
             elif name == 'execute_orm':
                 result = self._dispatch_execute_orm(arguments, env, user)
             elif name == 'post_message':
@@ -262,6 +325,7 @@ class ToolDispatcher:
         explicit_fields = bool(fields)
 
         model = env[model_name].with_user(user)
+        _check_domain_fields(model, domain)
         records = model.search_read(domain, fields, limit=limit, order=order)
         # Detect binary fields so we can swap bytes→URL instead of bytes→None
         binary_fields = {f for f in fields if f in model._fields and model._fields[f].type == 'binary'} if fields else set()
@@ -300,6 +364,7 @@ class ToolDispatcher:
         orderby = arguments.get('order') or arguments.get('orderby')
 
         model = env[model_name].with_user(user)
+        _check_domain_fields(model, domain)
         kwargs = {'limit': limit}
         if orderby:
             kwargs['orderby'] = orderby
@@ -364,85 +429,6 @@ class ToolDispatcher:
         result = getattr(records, method_name)(*args, **kwargs)
         return _make_serializable(result)
 
-    def _dispatch_code_search(self, arguments, env, user):
-        query = arguments['query']
-        path_filter = arguments.get('path_filter')
-
-        search_roots = [_MODULE_ROOT] + [p for p in _ODOO_ADDONS_PATHS if os.path.isdir(p)]
-
-        all_matches = []
-        for root_path in search_roots:
-            cmd = ['rg', '--json', query, root_path]
-            if path_filter:
-                cmd.extend(['-g', path_filter])
-            try:
-                res = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
-                for line in res.stdout.splitlines():
-                    try:
-                        data = json.loads(line)
-                        if data.get('type') == 'match':
-                            val = data['data']
-                            rel_path = os.path.relpath(val['path']['text'], root_path)
-                            all_matches.append({
-                                'file': rel_path,
-                                'line': val['line_number'],
-                                'content': val['submatches'][0]['match']['text']
-                            })
-                    except Exception:
-                        continue
-            except Exception:
-                pattern = re.compile(query)
-                for walk_root, dirs, files in os.walk(root_path):
-                    for f in files:
-                        if path_filter and not f.endswith(path_filter.replace('*', '')):
-                            continue
-                        full_p = os.path.join(walk_root, f)
-                        try:
-                            with open(full_p, 'r', errors='ignore') as fp:
-                                for idx, ln in enumerate(fp):
-                                    if pattern.search(ln):
-                                        all_matches.append({
-                                            'file': os.path.relpath(full_p, root_path),
-                                            'line': idx + 1,
-                                            'content': ln.strip()
-                                        })
-                                        if len(all_matches) >= 50:
-                                            return all_matches
-                        except Exception:
-                            continue
-            if len(all_matches) >= 50:
-                break
-        return all_matches[:50]
-
-    def _dispatch_code_read(self, arguments, env, user):
-        filepath = arguments['filepath']
-        start_line = arguments.get('start_line', 1)
-        end_line = arguments.get('end_line', 100)
-
-        target_path = None
-
-        # 1. Custom module root (e.g. mcp_gateway itself)
-        candidate = os.path.abspath(os.path.join(_MODULE_ROOT, filepath))
-        if candidate.startswith(_MODULE_ROOT) and os.path.exists(candidate):
-            target_path = candidate
-
-        # 2. Runtime addons paths — strip leading 'addons/' if present
-        if not target_path:
-            stripped = filepath[7:] if filepath.startswith('addons/') else filepath
-            for addons_dir in _ODOO_ADDONS_PATHS:
-                candidate = os.path.abspath(os.path.join(addons_dir, stripped))
-                if os.path.exists(candidate):
-                    target_path = candidate
-                    break
-
-        if target_path is None:
-            raise FileNotFoundError(f"File {filepath} not found.")
-
-        with open(target_path, 'r', encoding='utf-8', errors='ignore') as f:
-            lines = f.readlines()
-
-        return "".join(lines[start_line - 1 : end_line])
-
     def _dispatch_post_message(self, arguments, env, user):
         model = arguments['model']
         record_id = int(arguments['record_id'])
@@ -462,7 +448,9 @@ class ToolDispatcher:
         )
         for att in attachments:
             att['url'] = f'/web/content/{att["id"]}?download=true'
-        return {'model': model, 'record_id': record_id, 'attachments': attachments, 'count': len(attachments)}
+        # create_date comes back as a raw datetime from search_read — must
+        # serialize before this hits the outer json.dumps().
+        return _make_serializable({'model': model, 'record_id': record_id, 'attachments': attachments, 'count': len(attachments)})
 
     def _dispatch_upload_attachment(self, arguments, env, user):
         att = env['ir.attachment'].create({
@@ -526,6 +514,8 @@ class ToolDispatcher:
         if field_meta[field_name].get('readonly'):
             raise ValueError(f'Field {field_name} is readonly')
 
+        _assert_public_url(source_url)
+
         # pantalytics: 25MB cap, 64KB chunks
         _MAX_BINARY = 25 * 1024 * 1024
         chunks = []
@@ -553,8 +543,17 @@ class ToolDispatcher:
         if len(vals_list) > _BULK_MAX:
             raise ValueError(f'vals_list exceeds limit of {_BULK_MAX}')
 
+        def _coerce(vals):
+            processed = self._prepare_create_values(vals, model_name, env)
+            if isinstance(processed, dict) and 'error' in processed:
+                raise ValueError(processed['error'])
+            return processed
+
         model = env[model_name].with_user(user)
         if match_field:
+            # Match on the raw (pre-coercion) values, same as the singular
+            # create_record path — match_field is a plain identifier, not
+            # something that needs date/many2one/m2m coercion for a search.
             match_values = [v[match_field] for v in vals_list if match_field in v]
             existing = {
                 r[match_field]: r['id']
@@ -566,23 +565,26 @@ class ToolDispatcher:
                 if key and key in existing:
                     skipped_ids.append(existing[key])
                 else:
-                    to_create.append(vals)
+                    to_create.append(_coerce(vals))
             new_ids = model.create(to_create).ids if to_create else []
             return {'model': model_name, 'ids': new_ids, 'skipped_ids': skipped_ids,
                     'count': len(new_ids), 'skipped_count': len(skipped_ids)}
 
-        records = model.create(vals_list)
+        records = model.create([_coerce(vals) for vals in vals_list])
         return {'model': model_name, 'ids': records.ids, 'count': len(records)}
 
     def _dispatch_update_records(self, arguments, env, user):
         """pantalytics bulk update — same values written to multiple records."""
-        model = arguments['model']
+        model_name = arguments['model']
         record_ids = arguments['record_ids']
         values = arguments['values']
         if len(record_ids) > _BULK_MAX:
             raise ValueError(f'record_ids exceeds limit of {_BULK_MAX}')
-        env[model].with_user(user).browse(record_ids).write(values)
-        return {'model': model, 'record_ids': record_ids, 'count': len(record_ids)}
+        processed_vals = self._prepare_create_values(values, model_name, env)
+        if isinstance(processed_vals, dict) and 'error' in processed_vals:
+            raise ValueError(processed_vals['error'])
+        env[model_name].with_user(user).browse(record_ids).write(processed_vals)
+        return {'model': model_name, 'record_ids': record_ids, 'count': len(record_ids)}
 
     def _dispatch_delete_records(self, arguments, env, user):
         """pantalytics bulk delete — multiple records unlinked in one call."""
@@ -616,7 +618,7 @@ class ToolDispatcher:
     def _dispatch_accounting_health_summary(self, arguments, env, user):
         """tuanle96 pattern: quick AR/AP health check without multiple tool calls."""
         Move = env['account.move'].with_user(user)
-        today = date.today().isoformat()
+        today = date.today()  # compared against raw `date` values from search_read below — must stay a date, not a string
         ar = Move.search_read(
             [('move_type', '=', 'out_invoice'), ('state', '=', 'posted'),
              ('payment_state', 'not in', ['paid', 'reversed'])],
@@ -642,7 +644,7 @@ class ToolDispatcher:
                 'overdue_amount': sum(r['amount_residual'] for r in ap_overdue),
             },
             'draft_invoice_backlog': draft,
-            'as_of': today,
+            'as_of': today.isoformat(),
         }
 
     def _dispatch_import_from_file(self, arguments, env, user):
@@ -813,22 +815,8 @@ class ToolDispatcher:
             'print': print,
         }
         # Wrap in a function so multi-line code with assignments works.
-        # Use AST to find the last Expr statement and insert return at its start line.
-        import ast as _ast
-        stripped = code.strip()
-        try:
-            _tree = _ast.parse(stripped)
-            if _tree.body and isinstance(_tree.body[-1], _ast.Expr):
-                _lines = stripped.splitlines()
-                _start = _tree.body[-1].lineno - 1  # 0-indexed, points to opening line
-                _lines[_start] = 'return ' + _lines[_start]
-                stripped = '\n'.join(_lines)
-        except SyntaxError:
-            pass  # safe_eval will surface the error
-        indented = '\n'.join('    ' + line for line in stripped.splitlines())
-        fn_code = f'def _orm_fn():\n{indented}\n'
-        safe_eval(fn_code, eval_context, mode='exec', nocopy=True)
-        return eval_context['_orm_fn']()
+        # _safe_exec handles the AST return-insertion and mode='exec' boilerplate.
+        return _make_serializable(_safe_exec(stripped, eval_context, '_orm_fn'))
 
     def _dispatch_create_echart(self, arguments, env, user):
         name = arguments['name']
@@ -836,9 +824,6 @@ class ToolDispatcher:
         options = arguments.get('options', {})
 
         if data_code:
-            stripped = data_code.strip()
-            indented = '\n'.join('    ' + line for line in stripped.splitlines())
-            fn_code = f'def _chart_fn():\n{indented}\n'
             fn_globals = {
                 'env': env,
                 'user': user,
@@ -851,8 +836,7 @@ class ToolDispatcher:
                 're': _safe_re,
                 'math': _safe_math,
             }
-            safe_eval(fn_code, fn_globals, mode='exec', nocopy=True)
-            options = fn_globals['_chart_fn']()
+            options = _safe_exec(data_code.strip(), fn_globals, '_chart_fn')
 
         chart = env['mcp.echart'].with_user(user).create({
             'name': name,

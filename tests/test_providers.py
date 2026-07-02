@@ -231,29 +231,31 @@ class TestOpenAIProvider(TransactionCase):
 class TestGeminiProvider(TransactionCase):
     """Test Google Gemini adapter."""
 
-    @mock.patch('google.generativeai.GenerativeModel')
-    @mock.patch('google.generativeai.configure')
-    def test_gemini_call_success(self, mock_configure, mock_generative_model_class):
-        """Test successful Gemini API call."""
-        mock_model = mock_generative_model_class.return_value
-        
+    @mock.patch('google.genai.Client')
+    def test_gemini_call_success(self, mock_client_class):
+        """Test successful Gemini API call (new google-genai SDK, post-migration)."""
+        mock_client = mock_client_class.return_value
+
         mock_response = mock.Mock()
         mock_candidate = mock.Mock()
-        mock_candidate.finish_reason = mock.Mock(name='STOP')
+        # `Mock(name=...)` sets the mock's repr label, not a `.name` attribute —
+        # must assign `.name` after construction to mock `finish_reason.name`.
+        mock_candidate.finish_reason = mock.Mock()
+        mock_candidate.finish_reason.name = 'STOP'
         mock_candidate.content = mock.Mock(parts=[mock.Mock(text='This is a Gemini response.', function_call=None)])
         mock_response.candidates = [mock_candidate]
-        mock_response.usage_metadata = {
-            'prompt_token_count': 10,
-            'candidates_token_count': 5,
-        }
-        mock_model.generate_content.return_value = mock_response
+        mock_response.function_calls = None
+        # usage_metadata is read via getattr(usage, 'prompt_token_count', 0) — needs
+        # attribute access, not a dict (a dict here would silently read back as 0).
+        mock_response.usage_metadata = mock.Mock(prompt_token_count=10, candidates_token_count=5)
+        mock_client.models.generate_content.return_value = mock_response
 
         from ..mcp.providers.gemini import GeminiAdapter
         provider = GeminiAdapter(self.env)
 
         agent = mock.Mock()
         agent._decrypt_api_key.return_value = 'test-gemini-key'
-        agent.model_name = 'gemini-1.5-pro'
+        agent.model_name = 'gemini-2.5-flash'
         agent.system_prompt = 'You are a helpful assistant.'
         agent.max_tokens = 100
         agent.temperature = 0.7
@@ -262,6 +264,8 @@ class TestGeminiProvider(TransactionCase):
         result = provider.call(agent, [], [])
 
         self.assertIn('Gemini response', result['text'])
+        self.assertEqual(result['input_tokens'], 10)
+        self.assertEqual(result['output_tokens'], 5)
 
 
 class TestOllamaProvider(TransactionCase):

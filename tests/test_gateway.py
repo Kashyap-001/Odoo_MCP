@@ -52,7 +52,11 @@ class TestGatewayRun(TransactionCase):
             user_message='Hi there',
         )
 
-        self.assertEqual(result['reply'], 'Hello! How can I help?')
+        # Plain-text replies get wrapped in the structured-output envelope
+        # ({"_type": "text", "content": ...}) — see gateway.py's final guard.
+        reply_data = json.loads(result['reply'])
+        self.assertEqual(reply_data['_type'], 'text')
+        self.assertEqual(reply_data['content'], 'Hello! How can I help?')
         self.assertEqual(result['tool_calls'], 0)
         self.assertEqual(result['input_tokens'], 10)
         self.assertEqual(result['output_tokens'], 5)

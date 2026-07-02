@@ -1,48 +1,56 @@
 <?xml version="1.0" encoding="utf-8"?>
 <odoo noupdate="0">
-    <!-- Anthropic -->
-    <record id="model_anthropic_opus_4_7" model="mcp.model.option">
+    <!-- Anthropic — from platform.claude.com/docs/en/docs/about-claude/models/all-models (2026-07-01) -->
+    <record id="model_anthropic_fable5" model="mcp.model.option">
         <field name="provider">anthropic</field>
-        <field name="name">claude-opus-4-7</field>
+        <field name="name">claude-fable-5</field>
     </record>
-    <record id="model_anthropic_sonnet_4_6" model="mcp.model.option">
+    <record id="model_anthropic_opus_4_8" model="mcp.model.option">
         <field name="provider">anthropic</field>
-        <field name="name">claude-sonnet-4-6</field>
+        <field name="name">claude-opus-4-8</field>
+    </record>
+    <record id="model_anthropic_sonnet5" model="mcp.model.option">
+        <field name="provider">anthropic</field>
+        <field name="name">claude-sonnet-5</field>
     </record>
     <record id="model_anthropic_haiku_4_5" model="mcp.model.option">
         <field name="provider">anthropic</field>
         <field name="name">claude-haiku-4-5</field>
     </record>
+    <record id="model_anthropic_opus_4_7" model="mcp.model.option">
+        <field name="provider">anthropic</field>
+        <field name="name">claude-opus-4-7</field>
+    </record>
     <record id="model_anthropic_opus_4_6" model="mcp.model.option">
         <field name="provider">anthropic</field>
         <field name="name">claude-opus-4-6</field>
     </record>
-    <record id="model_anthropic_opus_4_5" model="mcp.model.option">
+    <record id="model_anthropic_sonnet_4_6" model="mcp.model.option">
         <field name="provider">anthropic</field>
-        <field name="name">claude-opus-4-5</field>
-    </record>
-    <record id="model_anthropic_opus_4_1" model="mcp.model.option">
-        <field name="provider">anthropic</field>
-        <field name="name">claude-opus-4-1</field>
+        <field name="name">claude-sonnet-4-6</field>
     </record>
     <record id="model_anthropic_sonnet_4_5" model="mcp.model.option">
         <field name="provider">anthropic</field>
         <field name="name">claude-sonnet-4-5</field>
     </record>
-    <record id="model_anthropic_sonnet_4" model="mcp.model.option">
-        <field name="provider">anthropic</field>
-        <field name="name">claude-sonnet-4</field>
-    </record>
-    <record id="model_anthropic_haiku_35" model="mcp.model.option">
-        <field name="provider">anthropic</field>
-        <field name="name">claude-3-5-haiku</field>
-    </record>
-    <record id="model_anthropic_35_sonnet" model="mcp.model.option">
-        <field name="provider">anthropic</field>
-        <field name="name">claude-3-5-sonnet-20241022</field>
-    </record>
 
-    <!-- OpenAI -->
+    <!-- OpenAI — from developers.openai.com/api/docs/models (2026-07-01) -->
+    <record id="model_openai_gpt55" model="mcp.model.option">
+        <field name="provider">openai</field>
+        <field name="name">gpt-5.5</field>
+    </record>
+    <record id="model_openai_gpt54" model="mcp.model.option">
+        <field name="provider">openai</field>
+        <field name="name">gpt-5.4</field>
+    </record>
+    <record id="model_openai_gpt54_mini" model="mcp.model.option">
+        <field name="provider">openai</field>
+        <field name="name">gpt-5.4-mini</field>
+    </record>
+    <record id="model_openai_gpt54_nano" model="mcp.model.option">
+        <field name="provider">openai</field>
+        <field name="name">gpt-5.4-nano</field>
+    </record>
     <record id="model_openai_gpt4o" model="mcp.model.option">
         <field name="provider">openai</field>
         <field name="name">gpt-4o</field>
@@ -51,70 +59,71 @@
         <field name="provider">openai</field>
         <field name="name">gpt-4o-mini</field>
     </record>
-    <record id="model_openai_gpt4_turbo" model="mcp.model.option">
-        <field name="provider">openai</field>
-        <field name="name">gpt-4-turbo</field>
+
+    <!-- Gemini — from ai.google.dev/gemini-api/docs/models (2026-07-01) -->
+    <!-- Free tier: gemini-2.5-flash and gemini-2.5-flash-lite have free API access -->
+    <record id="model_gemini_35_flash" model="mcp.model.option">
+        <field name="provider">gemini</field>
+        <field name="name">gemini-3.5-flash</field>
     </record>
-    <record id="model_openai_o1_preview" model="mcp.model.option">
-        <field name="provider">openai</field>
-        <field name="name">o1-preview</field>
+    <record id="model_gemini_25_pro" model="mcp.model.option">
+        <field name="provider">gemini</field>
+        <field name="name">gemini-2.5-pro</field>
     </record>
-    <record id="model_openai_o1_mini" model="mcp.model.option">
-        <field name="provider">openai</field>
-        <field name="name">o1-mini</field>
+    <record id="model_gemini_25_flash" model="mcp.model.option">
+        <field name="provider">gemini</field>
+        <field name="name">gemini-2.5-flash</field>
+    </record>
+    <record id="model_gemini_25_flash_lite" model="mcp.model.option">
+        <field name="provider">gemini</field>
+        <field name="name">gemini-2.5-flash-lite</field>
+    </record>
+    <record id="model_gemini_31_flash_lite" model="mcp.model.option">
+        <field name="provider">gemini</field>
+        <field name="name">gemini-3.1-flash-lite</field>
     </record>
 
-    <!-- Gemini -->
-    <record id="model_gemini_20_flash" model="mcp.model.option">
-        <field name="provider">gemini</field>
-        <field name="name">gemini-2.0-flash</field>
+    <!-- Ollama — local models, user must have pulled them first -->
+    <record id="model_ollama_llama33" model="mcp.model.option">
+        <field name="provider">ollama</field>
+        <field name="name">llama3.3</field>
     </record>
-    <record id="model_gemini_15_pro" model="mcp.model.option">
-        <field name="provider">gemini</field>
-        <field name="name">gemini-1.5-pro</field>
-    </record>
-    <record id="model_gemini_15_flash" model="mcp.model.option">
-        <field name="provider">gemini</field>
-        <field name="name">gemini-1.5-flash</field>
-    </record>
-
-    <!-- Ollama -->
     <record id="model_ollama_llama31" model="mcp.model.option">
         <field name="provider">ollama</field>
         <field name="name">llama3.1</field>
-    </record>
-    <record id="model_ollama_llama3" model="mcp.model.option">
-        <field name="provider">ollama</field>
-        <field name="name">llama3</field>
     </record>
     <record id="model_ollama_mistral" model="mcp.model.option">
         <field name="provider">ollama</field>
         <field name="name">mistral</field>
     </record>
-    <record id="model_ollama_codellama" model="mcp.model.option">
+    <record id="model_ollama_qwen25_coder" model="mcp.model.option">
         <field name="provider">ollama</field>
-        <field name="name">codellama</field>
+        <field name="name">qwen2.5-coder</field>
+    </record>
+    <record id="model_ollama_deepseek_r1" model="mcp.model.option">
+        <field name="provider">ollama</field>
+        <field name="name">deepseek-r1</field>
     </record>
 
-    <!-- Grok (xAI) -->
-    <record id="model_grok_3" model="mcp.model.option">
+    <!-- Grok (xAI) — from docs.x.ai/docs/models (2026-07-01) — all paid, $25 free credits on signup -->
+    <record id="model_grok_4_3" model="mcp.model.option">
         <field name="provider">grok</field>
-        <field name="name">grok-3</field>
+        <field name="name">grok-4.3</field>
     </record>
-    <record id="model_grok_3_mini" model="mcp.model.option">
+    <record id="model_grok_4_reasoning" model="mcp.model.option">
         <field name="provider">grok</field>
-        <field name="name">grok-3-mini</field>
+        <field name="name">grok-4.20-0309-reasoning</field>
     </record>
-    <record id="model_grok_2" model="mcp.model.option">
+    <record id="model_grok_4_non_reasoning" model="mcp.model.option">
         <field name="provider">grok</field>
-        <field name="name">grok-2</field>
+        <field name="name">grok-4.20-0309-non-reasoning</field>
     </record>
-    <record id="model_grok_beta" model="mcp.model.option">
+    <record id="model_grok_build" model="mcp.model.option">
         <field name="provider">grok</field>
-        <field name="name">grok-beta</field>
+        <field name="name">grok-build-0.1</field>
     </record>
 
-    <!-- OpenCode Zen -->
+    <!-- OpenCode Zen — proxied models via opencode.ai -->
     <record id="model_opencode_minimax_m25_free" model="mcp.model.option">
         <field name="provider">opencode</field>
         <field name="name">minimax-m2.5-free</field>

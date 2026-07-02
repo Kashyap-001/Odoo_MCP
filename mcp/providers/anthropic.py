@@ -155,6 +155,21 @@ class AnthropicAdapter(AbstractProvider):
             _logger.error('Anthropic response parse error: %s', str(e))
             raise UserError(_('Failed to parse Anthropic response: %s') % str(e))
 
+    def format_tool_calls(self, tool_calls: list) -> list:
+        """Anthropic handles tool_use inside content blocks; no tool_calls key needed in history."""
+        return []
+
+    def format_tool_result(self, tool_call_id: str, tool_name: str, result: str) -> dict:
+        """Anthropic tool result: user message with tool_result content block."""
+        return {
+            'role': 'user',
+            'content': [{
+                'type': 'tool_result',
+                'tool_use_id': tool_call_id,
+                'content': result,
+            }],
+        }
+
     def call(self, agent, messages: list, tool_specs: list) -> dict:
         """
         Make an API call using Anthropic SDK.
@@ -208,9 +223,14 @@ class AnthropicAdapter(AbstractProvider):
             list: Available model IDs
         """
         # Anthropic SDK doesn't have a models list endpoint, return known models
+        # Source: platform.claude.com/docs/en/docs/about-claude/models/all-models (2026-07-01)
         return [
-            'claude-opus-4-1',
+            'claude-fable-5',
+            'claude-opus-4-8',
+            'claude-sonnet-5',
+            'claude-haiku-4-5',
+            'claude-opus-4-7',
+            'claude-opus-4-6',
             'claude-sonnet-4-6',
-            'claude-haiku-3',
-            'claude-3-5-sonnet-20241022',
+            'claude-sonnet-4-5',
         ]

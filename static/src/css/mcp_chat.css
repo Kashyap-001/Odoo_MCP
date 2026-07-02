@@ -71,6 +71,73 @@
   letter-spacing: 0.05em;
 }
 
+.mcp-session-search {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin: 0 1.5rem 0.6rem;
+  padding: 0.4rem 0.6rem;
+  border: 1px solid var(--mcp-border-color);
+  border-radius: 6px;
+  background: transparent;
+  transition: border-color 0.2s;
+}
+
+.mcp-session-search:focus-within {
+  border-color: var(--mcp-ai-accent);
+}
+
+.mcp-session-search-icon {
+  font-size: 0.72rem;
+  color: var(--mcp-text-muted);
+  flex-shrink: 0;
+  line-height: 1;
+}
+
+.mcp-session-search-input {
+  flex: 1;
+  min-width: 0;
+  width: 100%;
+  padding: 0;
+  border: none;
+  outline: none;
+  background: transparent;
+  font-size: 0.78rem;
+  line-height: 1;
+  color: var(--mcp-text-main);
+}
+
+.mcp-session-search-input::placeholder {
+  color: var(--mcp-text-muted);
+}
+
+.mcp-session-search-clear {
+  font-size: 0.68rem;
+  color: var(--mcp-text-muted);
+  flex-shrink: 0;
+  cursor: pointer;
+  line-height: 1;
+}
+
+.mcp-session-search-clear:hover {
+  color: var(--mcp-text-main);
+}
+
+.mcp-pin-indicator {
+  font-size: 0.65rem;
+  color: var(--mcp-ai-accent);
+  margin-right: 0.3rem;
+}
+
+.mcp-session-menu-btn {
+  color: var(--mcp-text-muted, #94a3b8);
+  font-size: 12px;
+}
+
+.mcp-session-menu-btn:hover {
+  color: var(--mcp-text-main);
+}
+
 .mcp-session-list {
   display: flex;
   flex-direction: column;

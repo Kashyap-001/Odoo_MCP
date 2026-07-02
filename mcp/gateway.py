@@ -29,6 +29,7 @@ from datetime import datetime, timedelta
 import pytz
 from odoo import _, fields
 from odoo.exceptions import AccessError, UserError
+from odoo.tools import html_sanitize
 from .tools.dispatcher import ToolDispatcher
 
 _logger = logging.getLogger(__name__)
@@ -213,6 +214,41 @@ def normalize_history_for_format(messages, target_format):
             normalized.append(msg)
 
     return normalized
+
+
+_STDIO_MCP_READ_TIMEOUT = 15  # seconds — bounds how long a hung/slow external stdio MCP server can block a worker
+
+
+def _readline_with_timeout(pipe, timeout=_STDIO_MCP_READ_TIMEOUT):
+    """`pipe.readline()` blocks forever if the child never writes another line —
+    select() first so a hung/crashed stdio MCP server can't hang the whole
+    request (and orphan the subprocess, since `finally: proc.kill()` never
+    runs if readline() itself never returns)."""
+    import select
+    ready, _, _ = select.select([pipe], [], [], timeout)
+    if not ready:
+        raise TimeoutError(f'No response from MCP server within {timeout}s')
+    return pipe.readline()
+
+
+def _sanitize_html_blocks(data):
+    """Sanitize any {"_type": "html", "content": ...} block's content in place
+    (including ones nested inside a {"_type": "mixed", "blocks": [...]} array).
+
+    The model's structured reply is untrusted (a prompt-injected tool result or
+    a manipulated response could ask for raw <img onerror=...> etc.) — every
+    other _type is rendered via t-esc or a controlled markdown pass on the
+    frontend, but 'html' is rendered with a raw t-out, so it must be sanitized
+    before it's ever stored/displayed.
+    """
+    if not isinstance(data, dict):
+        return data
+    if data.get('_type') == 'html' and isinstance(data.get('content'), str):
+        data['content'] = html_sanitize(data['content'])
+    elif data.get('_type') == 'mixed' and isinstance(data.get('blocks'), list):
+        for block in data['blocks']:
+            _sanitize_html_blocks(block)
+    return data
 
 
 def format_tool_specs_for_api(tool_specs, target_format):
@@ -617,6 +653,15 @@ IMAGE FIELDS: When search_read returns image_1920, image_128, etc., the value is
         # Final guard: if AI returned plain text (ignored format instruction), wrap as {"_type": "text"}
         if assistant_text and not assistant_text.strip().startswith('{'):
             assistant_text = json.dumps({"_type": "text", "content": assistant_text})
+
+        # Sanitize any raw-HTML block before it's ever stored/displayed — the
+        # model's own reply is untrusted input (see _sanitize_html_blocks).
+        if assistant_text:
+            try:
+                parsed = json.loads(assistant_text)
+                assistant_text = json.dumps(_sanitize_html_blocks(parsed))
+            except (json.JSONDecodeError, TypeError):
+                pass
 
         # Log assistant reply
         self.env['mcp.session.message'].create({
@@ -1151,7 +1196,7 @@ NEVER use xAxis.data or series.data — always use dataset.source.
                 proc.stdin.flush()
 
             def _recv():
-                line = proc.stdout.readline()
+                line = _readline_with_timeout(proc.stdout)
                 return json.loads(line) if line else {}
 
             _send({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {
@@ -1244,21 +1289,11 @@ NEVER use xAxis.data or series.data — always use dataset.source.
                 'content': response.get('text') or response.get('reply') or '',
             }
 
-            # Add tool_calls to assistant message for OpenAI-format providers (required for tool result matching)
+            # Each provider owns its own history shape — no format-based branching needed.
             if response.get('tool_calls'):
-                if message_format == 'openai':
-                    # OpenAI spec: assistant message must carry tool_calls so tool results can be matched by ID
-                    assistant_msg['tool_calls'] = [
-                        {
-                            'id': tc.get('id', f'tc_{ti}'),
-                            'type': 'function',
-                            'function': {
-                                'name': tc.get('name', ''),
-                                'arguments': tc.get('arguments', '{}') if isinstance(tc.get('arguments'), str) else json.dumps(tc.get('arguments', {})),
-                            }
-                        }
-                        for ti, tc in enumerate(response.get('tool_calls', []))
-                    ]
+                formatted = provider.format_tool_calls(response.get('tool_calls', []))
+                if formatted:
+                    assistant_msg['tool_calls'] = formatted
 
             messages_to_send.append(assistant_msg)
 
@@ -1317,18 +1352,9 @@ NEVER use xAxis.data or series.data — always use dataset.source.
                                 messages_to_send.pop()  # remove stale no-tool assistant msg
                                 assistant_msg = {'role': 'assistant', 'content': response_text}
                                 if retry_resp.get('tool_calls'):
-                                    if message_format == 'openai':
-                                        assistant_msg['tool_calls'] = [
-                                            {
-                                                'id': tc.get('id', f'tc_{ti}'),
-                                                'type': 'function',
-                                                'function': {
-                                                    'name': tc.get('name', ''),
-                                                    'arguments': tc.get('arguments', '{}') if isinstance(tc.get('arguments'), str) else json.dumps(tc.get('arguments', {})),
-                                                }
-                                            }
-                                            for ti, tc in enumerate(retry_resp.get('tool_calls', []))
-                                        ]
+                                    formatted = provider.format_tool_calls(retry_resp.get('tool_calls', []))
+                                    if formatted:
+                                        assistant_msg['tool_calls'] = formatted
                                 messages_to_send.append(assistant_msg)
                             else:
                                 _logger.warning("Hallucination correction retry also returned no tool calls.")
@@ -1418,9 +1444,6 @@ NEVER use xAxis.data or series.data — always use dataset.source.
                 _args_dict = json.loads(arguments) if isinstance(arguments, str) else (arguments or {})
                 if tool_name == 'get_model_schema':
                     _args_key = (tool_name, json.dumps({'model': _args_dict.get('model', '')}, sort_keys=True))
-                elif tool_name in ('code_search', 'code_read', 'search_module_code'):
-                    # Any 3 code searches count as stuck, regardless of query
-                    _args_key = (tool_name, '')
                 else:
                     _args_key = (tool_name, json.dumps(_args_dict, sort_keys=True, default=str))
                 tool_call_counts[_args_key] = tool_call_counts.get(_args_key, 0) + 1
@@ -1948,9 +1971,10 @@ NEVER use xAxis.data or series.data — always use dataset.source.
         """
         Append a tool result to the messages array in provider-specific format.
 
-        Anthropic:    {'role': 'user', 'content': [{'type': 'tool_result', ...}]}
-        OpenAI:       {'role': 'tool', 'tool_call_id': ..., 'content': ...}
-        Gemini:       {'role': 'user', 'parts': [{'functionResponse': ...}]}
+        Delegates to provider.format_tool_result() so each provider adapter owns
+        its own history shape. The message_format parameter is kept for backwards
+        compatibility but is no longer used — the provider instance itself determines
+        the correct format.
 
         Args:
             provider: The provider adapter instance
@@ -1958,41 +1982,9 @@ NEVER use xAxis.data or series.data — always use dataset.source.
             tool_call_id: Provider-specific tool call ID
             tool_name: Tool name
             result: JSON string result from tool execution
-            message_format: Target format ('anthropic', 'openai', 'gemini')
+            message_format: Unused — retained for call-site compatibility
         """
-        # Use message_format instead of provider name for consistent format handling
-        if message_format == 'anthropic':
-            messages.append({
-                'role': 'user',
-                'content': [{
-                    'type': 'tool_result',
-                    'tool_use_id': tool_call_id,
-                    'content': result,
-                }],
-            })
-        elif message_format == 'openai':
-            messages.append({
-                'role': 'tool',
-                'tool_call_id': tool_call_id,
-                'content': result,
-            })
-        elif message_format == 'gemini':
-            messages.append({
-                'role': 'user',
-                'parts': [{
-                    'functionResponse': {
-                        'name': tool_name,
-                        'response': {'result': result},
-                    }
-                }],
-            })
-        else:
-            # Default to OpenAI format
-            messages.append({
-                'role': 'tool',
-                'tool_call_id': tool_call_id,
-                'content': result,
-            })
+        messages.append(provider.format_tool_result(tool_call_id, tool_name, result))
 
     def _retry_with_fallback_model(self, provider, agent, messages, tool_specs, original_model):
         """
@@ -2177,7 +2169,7 @@ NEVER use xAxis.data or series.data — always use dataset.source.
                 proc.stdin.flush()
 
             def _recv():
-                line = proc.stdout.readline()
+                line = _readline_with_timeout(proc.stdout)
                 return json.loads(line) if line else {}
 
             _send({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {

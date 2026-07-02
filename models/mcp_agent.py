@@ -469,10 +469,7 @@ class Agent(models.Model):
                     _logger.info('_onchange_provider: got models %s', models)
                     if models:
                         self.model_name = models[0]
-                        rec = self.env['mcp.model.option'].search(
-                            [('provider', '=', self.provider), ('name', '=', models[0])], limit=1
-                        )
-                        self.model_selection = rec
+                        self.model_selection = self._ensure_model_option(self.provider, models[0])
             except Exception as e:
                 _logger.warning('_onchange_provider: failed to fetch models: %s', e)
 
@@ -490,12 +487,25 @@ class Agent(models.Model):
                     _logger.info('_onchange_api_key: got models %s', models)
                     if models:
                         self.model_name = models[0]
-                        rec = self.env['mcp.model.option'].search(
-                            [('provider', '=', self.provider), ('name', '=', models[0])], limit=1
-                        )
-                        self.model_selection = rec
+                        self.model_selection = self._ensure_model_option(self.provider, models[0])
             except Exception as e:
                 _logger.warning('_onchange_api_key: failed to fetch models: %s', e)
+
+    def _ensure_model_option(self, provider, model_name):
+        """Find the mcp.model.option matching a live-fetched model, creating one
+        (is_discovered=True) if the model isn't in the pre-seeded list yet — keeps
+        the model_selection dropdown in sync with model_name instead of silently
+        going empty for newly-released models the seed data doesn't know about yet."""
+        rec = self.env['mcp.model.option'].search(
+            [('provider', '=', provider), ('name', '=', model_name)], limit=1
+        )
+        if not rec:
+            rec = self.env['mcp.model.option'].create({
+                'provider': provider,
+                'name': model_name,
+                'is_discovered': True,
+            })
+        return rec
 
     @api.onchange('model_selection')
     def _onchange_model_selection(self):

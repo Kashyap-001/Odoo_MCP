@@ -16,11 +16,6 @@
             <field name="description">Tools to create, update, delete, and execute methods on database records</field>
         </record>
 
-        <record id="category_code" model="mcp.tool.category">
-            <field name="name">Code Inspection Tools</field>
-            <field name="description">Tools to inspect and search custom module and addons code</field>
-        </record>
-
         <record id="category_advanced" model="mcp.tool.category">
             <field name="name">Advanced &amp; Sandbox Tools</field>
             <field name="description">High-risk tools including safe_eval scripting, EChart visualizations, module compilers, and subagent queries</field>
@@ -235,60 +230,13 @@
         </record>
 
         <!-- ──────────────────────────────────────────────────────────────── -->
-        <!-- CODE INSPECTION TOOLS                                            -->
-        <!-- ──────────────────────────────────────────────────────────────── -->
-
-        <record id="tool_code_search" model="mcp.tool">
-            <field name="name">code_search</field>
-            <field name="display_name_label">Search Addons Code</field>
-            <field name="description">Search the module source code for classes, methods, or patterns. Use when the user asks: "where is X defined", "find the class", "search codebase for", "which file contains", "show me the implementation of". Returns file path, line number, and matching content. IMPORTANT: Do NOT use this to discover method names for standard Odoo models (sale.order, account.move, etc.) — call execute_orm directly with the method name you already know.</field>
-            <field name="category_id" ref="category_code"/>
-            <field name="tool_type">odoo</field>
-            <field name="odoo_model">ir.model</field>
-            <field name="odoo_method">code_search</field>
-            <field name="is_readonly">True</field>
-            <field name="requires_confirm">False</field>
-            <field name="input_schema">{
-  "type": "object",
-  "properties": {
-    "query": {"type": "string", "description": "Pattern regex to search for"},
-    "path_filter": {"type": "string", "description": "Glob pattern to filter paths (e.g., \"*.py\")"}
-  },
-  "required": ["query"]
-}</field>
-            <field name="output_sample">[{"file": "models/res_partner.py", "line": 42, "content": "class ResPartner(models.Model):"}]</field>
-        </record>
-
-        <record id="tool_code_read" model="mcp.tool">
-            <field name="name">code_read</field>
-            <field name="display_name_label">Read Code File</field>
-            <field name="description">Read the contents of a source file from the module directory. Use when the user says: "show me the file", "read the code in", "open the file", "what is in", or after code_search returns a file path and you need to see the full content.</field>
-            <field name="category_id" ref="category_code"/>
-            <field name="tool_type">odoo</field>
-            <field name="odoo_model">ir.model</field>
-            <field name="odoo_method">code_read</field>
-            <field name="is_readonly">True</field>
-            <field name="requires_confirm">False</field>
-            <field name="input_schema">{
-  "type": "object",
-  "properties": {
-    "filepath": {"type": "string", "description": "Relative path to file in project"},
-    "start_line": {"type": "integer", "description": "Start line (1-indexed)", "default": 1},
-    "end_line": {"type": "integer", "description": "End line (1-indexed)", "default": 100}
-  },
-  "required": ["filepath"]
-}</field>
-            <field name="output_sample">"class Partner(models.Model):\n    _inherit = 'res.partner'"</field>
-        </record>
-
-        <!-- ──────────────────────────────────────────────────────────────── -->
         <!-- ADVANCED / SANDBOX TOOLS                                         -->
         <!-- ──────────────────────────────────────────────────────────────── -->
 
         <record id="tool_execute_orm" model="mcp.tool">
             <field name="name">execute_orm</field>
             <field name="display_name_label">Execute Backend Script (safe_eval)</field>
-            <field name="description">Execute a Python script in Odoo's safe_eval sandbox with full ORM access. Use for complex multi-step operations that no single tool covers. NEVER write "import" or "from" statements — all modules are pre-loaded: base64, io, BytesIO, StringIO, xlrd, openpyxl, re, json, datetime, date, timedelta, math, itertools, defaultdict, Counter, print. Do NOT use python "with" statements (they are forbidden by Odoo safe_eval; write explicit assignments and close manually instead). IMPORTANT: Use "return" to expose results to the AI — print() output goes to server logs only and will NOT be visible in the response. To read a spreadsheet attachment use the built-in helper: read_excel(attachment_id) → list of row lists (handles .xls, .xlsx, AND .ods automatically). Note: attachment.datas is base64-encoded; attachment.raw is raw bytes — read_excel handles the decode internally. Valid ir.attachment fields: id, name, mimetype, file_size, datas, raw, url, res_model, res_id (datas_fname was removed in Odoo 13, do not use it).</field>
+            <field name="description">Execute a Python script in Odoo's safe_eval sandbox with full ORM access. Use for complex multi-step operations that no single tool covers. NEVER guess field names — call get_model_schema first if unsure which fields exist on a model; this tool bypasses the automatic field-name safety net the other write tools have, since you write the create()/write() calls yourself. NEVER write "import" or "from" statements — all modules are pre-loaded: base64, io, BytesIO, StringIO, xlrd, openpyxl, re, json, datetime, date, timedelta, math, itertools, defaultdict, Counter, print. Do NOT use python "with" statements (they are forbidden by Odoo safe_eval; write explicit assignments and close manually instead). IMPORTANT: Use "return" to expose results to the AI — print() output goes to server logs only and will NOT be visible in the response. To read a spreadsheet attachment use the built-in helper: read_excel(attachment_id) → list of row lists (handles .xls, .xlsx, AND .ods automatically). Note: attachment.datas is base64-encoded; attachment.raw is raw bytes — read_excel handles the decode internally. Valid ir.attachment fields: id, name, mimetype, file_size, datas, raw, url, res_model, res_id (datas_fname was removed in Odoo 13, do not use it).</field>
             <field name="category_id" ref="category_advanced"/>
             <field name="tool_type">odoo</field>
             <field name="odoo_model">ir.model</field>

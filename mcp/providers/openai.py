@@ -162,6 +162,29 @@ class OpenAIAdapter(AbstractProvider):
             _logger.error('OpenAI response parse error: %s', str(e))
             raise UserError(_('Failed to parse OpenAI response: %s') % str(e))
 
+    def format_tool_calls(self, tool_calls: list) -> list:
+        """OpenAI spec: assistant message must carry tool_calls so results match by ID."""
+        import json as _json
+        return [
+            {
+                'id': tc.get('id', f'tc_{i}'),
+                'type': 'function',
+                'function': {
+                    'name': tc.get('name', ''),
+                    'arguments': (
+                        tc.get('arguments', '{}')
+                        if isinstance(tc.get('arguments'), str)
+                        else _json.dumps(tc.get('arguments', {}))
+                    ),
+                }
+            }
+            for i, tc in enumerate(tool_calls)
+        ]
+
+    def format_tool_result(self, tool_call_id: str, tool_name: str, result: str) -> dict:
+        """OpenAI tool result: role=tool message with matching tool_call_id."""
+        return {'role': 'tool', 'tool_call_id': tool_call_id, 'content': result}
+
     def call(self, agent, messages: list, tool_specs: list) -> dict:
         """
         Make an API call using OpenAI SDK.
@@ -224,9 +247,12 @@ class OpenAIAdapter(AbstractProvider):
             return [m.id for m in models.data if 'gpt' in m.id.lower()]
         except Exception as e:
             _logger.warning('Failed to fetch OpenAI models: %s', str(e))
+            # Source: developers.openai.com/api/docs/models (2026-07-01)
             return [
+                'gpt-5.5',
+                'gpt-5.4',
+                'gpt-5.4-mini',
+                'gpt-5.4-nano',
                 'gpt-4o',
-                'gpt-4-turbo',
-                'gpt-4',
-                'gpt-3.5-turbo',
+                'gpt-4o-mini',
             ]

@@ -11,11 +11,11 @@ mcp_tool_set_admin,mcp_tool_set_admin,model_mcp_tool_set,group_mcp_admin,1,1,1,1
 mcp_agent_user,mcp_agent_user,model_mcp_agent,group_mcp_user,1,0,0,0
 mcp_agent_manager,mcp_agent_manager,model_mcp_agent,group_mcp_manager,1,1,1,0
 mcp_agent_admin,mcp_agent_admin,model_mcp_agent,group_mcp_admin,1,1,1,1
-mcp_session_user,mcp_session_user,model_mcp_session,group_mcp_user,1,1,1,0
-mcp_session_manager,mcp_session_manager,model_mcp_session,group_mcp_manager,1,1,1,0
-mcp_session_admin,mcp_session_admin,model_mcp_session,group_mcp_admin,1,1,1,0
+mcp_session_user,mcp_session_user,model_mcp_session,group_mcp_user,1,1,1,1
+mcp_session_manager,mcp_session_manager,model_mcp_session,group_mcp_manager,1,1,1,1
+mcp_session_admin,mcp_session_admin,model_mcp_session,group_mcp_admin,1,1,1,1
 mcp_session_message_user,mcp_session_message_user,model_mcp_session_message,group_mcp_user,1,1,1,0
-mcp_session_employee,mcp_session_employee,model_mcp_session,base.group_user,1,1,1,0
+mcp_session_employee,mcp_session_employee,model_mcp_session,base.group_user,1,1,1,1
 mcp_session_message_employee,mcp_session_message_employee,model_mcp_session_message,base.group_user,1,1,1,0
 mcp_access_rule_manager,mcp_access_rule_manager,model_mcp_access_rule,group_mcp_manager,1,1,1,1
 mcp_access_rule_admin,mcp_access_rule_admin,model_mcp_access_rule,group_mcp_admin,1,1,1,1

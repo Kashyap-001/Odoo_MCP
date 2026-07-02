@@ -38,9 +38,21 @@
                 <!-- Recent Sessions grouped by agent -->
                 <div class="mcp-sidebar-section">
                     <div class="mcp-section-label">RECENT SESSIONS</div>
+                    <div class="mcp-session-search">
+                        <i class="fa fa-search mcp-session-search-icon"/>
+                        <input type="text"
+                               class="mcp-session-search-input"
+                               placeholder="Search sessions..."
+                               t-att-value="state.searchQuery"
+                               t-on-input="onSessionSearchInput"/>
+                        <i t-if="state.searchQuery" class="fa fa-times mcp-session-search-clear" t-on-click="clearSessionSearch" title="Clear search"/>
+                    </div>
                     <div class="mcp-session-list">
                         <t t-if="sessionsByAgent.length === 0">
-                            <div class="mcp-session-empty">No sessions yet</div>
+                            <div class="mcp-session-empty">
+                                <t t-if="state.searchQuery">No sessions found for "<t t-esc="state.searchQuery"/>"</t>
+                                <t t-else="">No sessions yet</t>
+                            </div>
                         </t>
                         <t t-foreach="sessionsByAgent" t-as="group" t-key="group.id">
                             <div class="mcp-agent-group-label"
@@ -59,12 +71,25 @@
                                     <div class="mcp-session-item d-flex align-items-center justify-content-between p-2 rounded mb-1"
                                          t-att-class="{'active': state.sessionId === session.id}">
                                         <div class="mcp-session-content flex-grow-1" t-on-click="() => this.selectSession(session)" style="cursor: pointer;">
-                                            <div class="mcp-session-name fw-bold small text-truncate"><t t-esc="session.name"/></div>
+                                            <div class="mcp-session-name fw-bold small text-truncate">
+                                                <i t-if="session.is_pinned" class="fa fa-thumb-tack mcp-pin-indicator" style="transform: rotate(45deg);"/>
+                                                <t t-esc="session.name"/>
+                                            </div>
                                             <div class="mcp-session-preview small text-muted text-truncate" style="max-height: 1.5em;"><t t-esc="session.lastMessage"/></div>
                                         </div>
-                                        <button class="btn btn-link p-1 mcp-pin-btn" t-on-click.stop="() => this.togglePinSession(session)" t-att-title="session.is_pinned ? 'Unpin Chat' : 'Pin Chat'" style="color: var(--mcp-text-muted, #94a3b8); font-size: 11px;">
-                                            <i t-attf-class="fa fa-thumb-tack {{ session.is_pinned ? 'text-primary' : 'opacity-50' }}" style="transform: rotate(45deg);"/>
-                                        </button>
+                                        <Dropdown>
+                                            <button class="btn btn-link p-1 mcp-session-menu-btn" t-on-click.stop="" title="More actions">
+                                                <i class="fa fa-ellipsis-v"/>
+                                            </button>
+                                            <t t-set-slot="content">
+                                                <DropdownItem onSelected="() => this.togglePinSession(session)">
+                                                    <t t-esc="session.is_pinned ? 'Unpin' : 'Pin'"/>
+                                                </DropdownItem>
+                                                <DropdownItem onSelected="() => this.renameSession(session)">Rename</DropdownItem>
+                                                <DropdownItem onSelected="() => this.exportSession(session)">Export Transcript</DropdownItem>
+                                                <DropdownItem onSelected="() => this.deleteSession(session)" class="'text-danger'">Delete</DropdownItem>
+                                            </t>
+                                        </Dropdown>
                                     </div>
                                 </t>
                             </t>

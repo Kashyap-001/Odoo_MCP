@@ -12,10 +12,13 @@ Dependencies:
   - json for payload building
 
 Developer notes:
-  - All providers follow same interface: build_headers, build_payload, parse_response
+  - All providers follow same interface: build_headers, build_payload, parse_response,
+    format_tool_calls, format_tool_result
   - Providers never see plaintext API keys (decrypted only in call())
   - Error handling standardized: all exceptions converted to UserError
   - Subclasses implement provider-specific protocol details
+  - format_tool_calls / format_tool_result own all message-history shaping so
+    gateway.py never needs a message_format if/elif chain again
 """
 
 import logging
@@ -137,6 +140,40 @@ class AbstractProvider(ABC):
 
         Raises:
             UserError: if fetch fails
+        """
+
+    @abstractmethod
+    def format_tool_calls(self, tool_calls: list) -> list:
+        """
+        Shape the tool_calls list for embedding in an assistant history message.
+
+        Called by gateway.py after the provider returns tool_calls in its response,
+        before appending the assistant message to the history that will be sent on
+        the next turn.
+
+        Args:
+            tool_calls (list): Raw tool_calls from parse_response(), each a dict with
+                               at minimum 'id', 'name', 'arguments' keys.
+
+        Returns:
+            list: Provider-specific tool_calls shape to store in assistant_msg['tool_calls'].
+                  Return an empty list if this provider does not use tool_calls in history.
+        """
+
+    @abstractmethod
+    def format_tool_result(self, tool_call_id: str, tool_name: str, result: str) -> dict:
+        """
+        Build the history message that carries a tool's result back to the model.
+
+        Called by gateway.py (_append_tool_result) after a tool executes.
+
+        Args:
+            tool_call_id (str): Provider-specific call ID.
+            tool_name (str): Tool name.
+            result (str): JSON-serialized tool output.
+
+        Returns:
+            dict: A single message dict ready to append to the history list.
         """
 
     def call(self, agent, messages: list, tool_specs: list) -> dict:

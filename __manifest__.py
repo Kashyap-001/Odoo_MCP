@@ -1,6 +1,6 @@
 {
     'name': 'AI Gateway',
-    'version': '18.0.2.0.3',
+    'version': '18.0.2.0.4',
     'category': 'Technical',
     'license': 'LGPL-3',
     'author': 'AI Gateway Contributors',
@@ -30,7 +30,10 @@ Requirements:
     ''',
     'depends': ['base', 'web', 'mail', 'bus'],
     'external_dependencies': {
-        'python': ['requests', 'cryptography', 'anthropic', 'openai', 'google-generativeai', 'mcp', 'httpx'],
+        # Only list packages that are ALWAYS required (not provider-specific)
+        # Provider SDKs are imported lazily inside each provider's call() method
+        # so the module installs fine even if only some providers are installed.
+        'python': ['requests', 'cryptography', 'httpx'],
     },
     'data': [
         'security/mcp_security.xml',

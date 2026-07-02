@@ -1,0 +1,21 @@
+# MCP Gateway — Python dependencies
+# Install before installing the Odoo module:
+#   pip install -r requirements.txt
+
+# Always required
+requests>=2.28.0
+cryptography>=41.0.0
+httpx>=0.24.0
+
+# Provider SDKs — install only the ones you need
+# Anthropic (Claude)
+anthropic>=0.40.0
+
+# OpenAI (GPT-5, GPT-4o) — also used by Grok (xAI)
+openai>=1.30.0
+
+# Google Gemini — use the NEW SDK (google-genai), not google-generativeai
+google-genai>=1.0.0
+
+# Jinja2 — for webhook message templates (usually pre-installed with Odoo)
+jinja2>=3.0.0

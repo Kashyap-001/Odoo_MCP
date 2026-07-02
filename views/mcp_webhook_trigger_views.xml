@@ -8,8 +8,6 @@
                 <field name="sequence" widget="handle"/>
                 <field name="name"/>
                 <field name="agent_id"/>
-                <field name="trigger_model"/>
-                <field name="trigger_on"/>
                 <field name="last_triggered"/>
                 <field name="trigger_count"/>
                 <field name="active" optional="show"/>
@@ -43,17 +41,7 @@
                     </group>
 
                     <notebook>
-                        <page string="Trigger" name="trigger">
-                            <group string="What fires this trigger">
-                                <field name="trigger_model" required="1"
-                                       help="Odoo model technical name e.g. crm.lead, sale.order"/>
-                                <field name="trigger_on"/>
-                                <field name="trigger_fields"
-                                       invisible="trigger_on != 'write'"
-                                       help="Only fire if these fields changed (comma-separated). Leave empty = any write."/>
-                                <field name="domain"
-                                       help="Domain filter e.g. [['state','=','draft']]. Leave [] for all records."/>
-                            </group>
+                        <page string="Message" name="message">
                             <group string="Message sent to AI">
                                 <field name="message_template" required="1" nolabel="1" colspan="2"
                                        placeholder="e.g. New lead arrived: {{ record.name }} — qualify it and suggest next steps."/>
