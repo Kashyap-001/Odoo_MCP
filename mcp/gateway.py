@@ -1250,9 +1250,6 @@ NEVER use xAxis.data or series.data — always use dataset.source.
         # Determine if we should strip system message (for providers that handle system internally)
         # NOTE: Don't strip system messages - the providers extract system from messages parameter
         # and handle it themselves. Stripping would remove the datetime-injected system message.
-        provider_name = getattr(provider, '__class__', None).__name__ or ''
-        # Anthropic handles system separately via 'system' parameter in payload - don't strip
-        # All other providers extract from messages, so don't strip either
         messages_to_send = messages
 
         for turn in range(max_turns):
@@ -1264,7 +1261,7 @@ NEVER use xAxis.data or series.data — always use dataset.source.
                     break
 
             # Retry logic for provider calls (handles transient errors from some providers)
-            max_retries = 2
+            max_retries = 3
             response = None
             # Clean history before each API call to remove ghost/empty turns
             messages_to_send = self.clean_conversation_history(messages_to_send)
@@ -1283,14 +1280,14 @@ NEVER use xAxis.data or series.data — always use dataset.source.
                             if messages_to_send and messages_to_send[-1].get('role') == 'tool':
                                 messages_to_send = messages_to_send[:-1]
                             import time
-                            time.sleep(1 * (attempt + 1))  # 1s, 2s backoff
+                            time.sleep(2 * (attempt + 1))  # 2s, 4s, 6s backoff
                             continue
                     break
                 except Exception as e:
                     if attempt < max_retries:
                         self._logger.warning('Provider call failed on attempt %d: %s', attempt + 1, str(e))
                         import time
-                        time.sleep(1 * (attempt + 1))
+                        time.sleep(2 * (attempt + 1))
                     else:
                         raise
 
