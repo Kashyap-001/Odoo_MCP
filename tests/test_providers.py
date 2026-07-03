@@ -105,6 +105,27 @@ class TestAnthropicProvider(TransactionCase):
             provider.call(agent, [], [])
         self.assertIn('rate limit exceeded', str(cm.exception).lower())
 
+    def test_anthropic_tool_use_survives_history_round_trip(self):
+        """format_tool_calls() must return the OpenAI-canonical shape so
+        gateway.normalize_history_for_format() can rebuild a native tool_use
+        block — regression test for the 2026-07-03 bug where it returned []
+        and silently dropped tool_use from history, breaking any multi-tool-call
+        Anthropic conversation (tool_result referenced a nonexistent tool_use_id)."""
+        from ..mcp.providers.anthropic import AnthropicAdapter
+        from ..mcp.gateway import normalize_history_for_format
+
+        provider = AnthropicAdapter(self.env)
+        formatted = provider.format_tool_calls([{'id': 'toolu_1', 'name': 'search_read', 'arguments': {'model': 'res.partner'}}])
+        self.assertTrue(formatted, "format_tool_calls() must not return an empty list")
+
+        assistant_msg = {'role': 'assistant', 'content': '', 'tool_calls': formatted}
+        tool_result_msg = provider.format_tool_result('toolu_1', 'search_read', '{"success": true}')
+        normalized = normalize_history_for_format([assistant_msg, tool_result_msg], 'anthropic')
+
+        tool_use_ids = [b['id'] for b in normalized[0]['content'] if isinstance(b, dict) and b.get('type') == 'tool_use']
+        result_ref = normalized[1]['content'][0]['tool_use_id']
+        self.assertIn(result_ref, tool_use_ids, "tool_result must reference a tool_use_id present in the prior assistant turn")
+
 
 class TestOpenAIProvider(TransactionCase):
     """Test OpenAI GPT adapter."""

@@ -473,6 +473,8 @@ Choose the _type that best fits your answer:
 
 {"_type": "image", "url": "/web/image/product.template/1/image_1920", "alt": "Product image"}
 
+{"_type": "chart", "chart_id": 10, "title": "Sales by Month"} — use to SHOW/RE-DISPLAY a chart already saved via create_echart (e.g. user says "show me that chart again", "can I see the sales chart"). Get chart_id via read_record/search_read on mcp.echart first. Do NOT include an "options" field — the frontend fetches the chart's current data live from chart_id.
+
 {"_type": "attachment", "url": "/web/content/123", "filename": "invoice.pdf", "mimetype": "application/pdf"}
 
 {"_type": "cards", "title": "Products (5)", "items": [{"title": "Laptop", "subtitle": "$1,200", "image_url": "/web/image/product.template/1/image_1920", "fields": {"Stock": 42, "Code": "LAP-01"}}]}
@@ -492,8 +494,9 @@ Selection rules — use the FIRST type that fits, in this order:
 6. mixed: summary sentence + data (text block + table or fields)
 7. html: coloured status badges, alerts, progress indicators
 8. image: when showing a single image
-9. attachment: when sharing a file download
-10. text: conversational reply, confirmation, or explanation with no data — content must be plain prose, NO markdown bold (**), NO markdown tables (|), NO bullet lists with *. If you have structured data, use the correct type.
+9. chart: when asked to show/re-display a previously created chart (from create_echart) — find its id first via read_record/search_read on mcp.echart
+10. attachment: when sharing a file download
+11. text: conversational reply, confirmation, or explanation with no data — content must be plain prose, NO markdown bold (**), NO markdown tables (|), NO bullet lists with *. If you have structured data, use the correct type.
 
 Standards that apply to ALL types:
 - table/cards: ALWAYS include count in title: "Products (38)", never just "Products"
@@ -1104,11 +1107,20 @@ Bar/Line:
   result = env['sale.order'].read_group(domain=[['date_order','>=','2026-06-01'],['state','not in',['cancel']]], fields=['amount_total:sum'], groupby=['date_order:day'])
   source = [['Date','Sales']] + [[str(r.get('date_order:day','')), r.get('amount_total',0)] for r in result]
   return {'title':{'text':'Sales'},'dataset':{'source':source},'xAxis':{'type':'category'},'yAxis':{'type':'value'},'series':[{'type':'bar'}]}
+Stacked/Area Bar: same shape as Bar, add 'stack':'total' per series for stacked, or 'areaStyle':{} for a filled area.
 Pie:
   result = env['sale.order'].read_group(domain=[], fields=['amount_total:sum'], groupby=['partner_id'])
   source = [['Customer','Amount']] + [[r['partner_id'][1], r.get('amount_total',0)] for r in result if r.get('partner_id')]
   return {'dataset':{'source':source},'series':[{'type':'pie','radius':'60%','encode':{'itemName':'Customer','value':'Amount'}}]}
-NEVER use xAxis.data or series.data — always use dataset.source.
+Donut: identical to Pie but 'radius':['40%','70%'] (inner+outer) instead of a single radius.
+Scatter: source = [['X','Y']] + [[x, y] for ...]; return {'dataset':{'source':source},'xAxis':{'type':'value'},'yAxis':{'type':'value'},'series':[{'type':'scatter'}]}.
+Heatmap: source rows are [xCategory, yCategory, value] triplets; return {'dataset':{'source':source},'xAxis':{'type':'category'},'yAxis':{'type':'category'},'series':[{'type':'heatmap','encode':{'x':0,'y':1,'value':2}}]}.
+Funnel: same encode shape as Pie, 'series':[{'type':'funnel','encode':{'itemName':'Customer','value':'Amount'}}].
+EXCEPTIONS (the only two that do NOT use dataset.source — ECharts requires explicit data arrays for these):
+  Radar: {'radar':{'indicator':[{'name':...,'max':...}, ...]}, 'series':[{'type':'radar','data':[{'value':[...],'name':...}]}]}
+  Gauge (single value): {'series':[{'type':'gauge','data':[{'value':72,'name':'Score'}]}]}
+NEVER use xAxis.data or series.data except for Radar/Gauge above — always use dataset.source otherwise.
+TO EDIT AN EXISTING CHART (recolor, restyle, change its data): do NOT call create_echart again — that always creates a duplicate record. Call read_record on mcp.echart with the chart's id to get its current options, modify the JSON, then call update_record on mcp.echart with that id and the new options (or data_code) value.
 """
 
         return guidance
@@ -1314,10 +1326,16 @@ NEVER use xAxis.data or series.data — always use dataset.source.
 
             # Detect hallucination: model returned stop with no tool call for action request,
             # and no tool has been called at all yet this session turn.
-            if not tool_calls and total_tool_calls == 0 and response.get('finish_reason') in ('stop', 'end_turn'):
-                # Find the user message in history to check for action words
+            if not tool_calls and total_tool_calls == 0 and response.get('stop_reason') in ('stop', 'end_turn'):
+                # Find the LATEST user message to check for action words — a synthetic
+                # "What is today's date?" pair is always inserted at index 1 of `messages`
+                # (see the date-injection block above), so scanning forward always found
+                # THAT instead of the real user turn that triggered this response, silently
+                # breaking the has_action_word check on every single turn since the date
+                # injection feature was added (only claims_action_done still worked, since
+                # it checks the model's own reply text, not the user message).
                 user_msg_for_check = None
-                for msg in messages:
+                for msg in reversed(messages):
                     if msg.get('role') == 'user' and msg.get('content'):
                         user_msg_for_check = msg.get('content', '')
                         break
@@ -1325,7 +1343,8 @@ NEVER use xAxis.data or series.data — always use dataset.source.
                 if user_msg_for_check:
                     user_msg_lower = user_msg_for_check.lower()
                     action_words = [
-                        'create', 'make', 'add', 'update', 'delete', 'schedule',
+                        'create', 'make', 'add', 'update', 'change', 'modify', 'set',
+                        'edit', 'rename', 'remove', 'delete', 'schedule',
                         'find', 'search', 'book', 'cancel', 'list', 'show', 'get',
                         'how many', 'count', 'fetch', 'retrieve', 'give me', 'what are',
                         'tell me', 'display', 'view', 'open', 'check', 'look up',
@@ -1333,7 +1352,26 @@ NEVER use xAxis.data or series.data — always use dataset.source.
                     ]
                     has_action_word = any(w in user_msg_lower for w in action_words)
 
-                    if has_action_word:
+                    # Independent of how the user phrased the request: if the model's OWN
+                    # reply claims a write happened ("Updated the...", "Created X", ...) while
+                    # zero tools were called this turn, that claim is fabricated — no legitimate
+                    # code path produces this. Catches phrasings that dodge the action_words list.
+                    fabrication_verbs = [
+                        'updated', 'created', 'deleted', 'removed', 'changed',
+                        'modified', 'added', 'renamed', 'archived', 'cancelled', 'scheduled',
+                        'posted', 'logged', 'noted', 'attached', 'assigned', 'confirmed',
+                        'approved', 'rejected', 'sent', 'linked', 'merged',
+                    ]
+                    response_text_lower = response_text.lower()
+                    # 'success'/'successfully' catches this whole class regardless of which verb
+                    # the model happened to use — more robust than enumerating every synonym
+                    # (this is exactly how the 'posted' case slipped past the verb list above).
+                    claims_action_done = (
+                        any(v in response_text_lower for v in fabrication_verbs)
+                        or 'success' in response_text_lower
+                    )
+
+                    if has_action_word or claims_action_done:
                         _logger.warning(
                             "HALLUCINATION DETECTED: action request '%s' returned no tool call — retrying with correction.",
                             user_msg_for_check[:80]
@@ -1503,7 +1541,11 @@ NEVER use xAxis.data or series.data — always use dataset.source.
                             result = json.dumps({'success': False, 'error': f'Tool not found: {tool_name}'})
                             self._logger.warning('Tool not found: %s', tool_name)
                     elif not is_admin and not has_general_access and tool.id not in rules['tool_ids'].ids:
-                        result = json.dumps({'success': False, 'error': f'Access denied to tool: {tool_name}'})
+                        _label = tool.display_name_label or tool_name
+                        result = json.dumps({
+                            'success': False,
+                            'error': f"You don't have access to the \"{_label}\" tool. Please contact your admin to request access.",
+                        })
                         self._logger.warning('User %s not allowed to use tool %s', self.user.name, tool_name)
                     else:
                         # Execute tool
@@ -1535,7 +1577,9 @@ NEVER use xAxis.data or series.data — always use dataset.source.
                             'tool_call_id': tool_call_id,
                         })
                         # Return the error as the final response instead of continuing loop
-                        error_msg = f"Tool execution failed: {result_data.get('error', 'Unknown error')}. {result_data.get('message', '')}"
+                        _err = result_data.get('error', 'Unknown error')
+                        _extra = result_data.get('message', '')
+                        error_msg = f"{_err} {_extra}".strip() if _extra else _err
                         return {
                             'text': json.dumps({'_type': 'error', 'content': error_msg.strip()}),
                             'tool_calls': [],
@@ -1566,15 +1610,15 @@ NEVER use xAxis.data or series.data — always use dataset.source.
                     try:
                         r = json.loads(result)
                         if not (isinstance(r, dict) and r.get('success') is False):
-                            _terminal_results.append((tool_name, r))
+                            _terminal_results.append((tool_name, r, _args_dict))
                     except (json.JSONDecodeError, TypeError):
                         pass
 
             # Return after all parallel terminal tool calls have been processed
             if _terminal_results:
                 if len(_terminal_results) == 1:
-                    t_name, t_result = _terminal_results[0]
-                    done_msg = self._format_terminal_tool_message(t_name, t_result)
+                    t_name, t_result, t_args = _terminal_results[0]
+                    done_msg = self._format_terminal_tool_message(t_name, t_result, t_args)
                 else:
                     done_msg = self._format_terminal_tool_messages_bulk(_terminal_results)
                 return {
@@ -1696,68 +1740,130 @@ NEVER use xAxis.data or series.data — always use dataset.source.
         self._logger.warning('Max tool-call turns (%d) reached, returning partial response', max_turns)
         return response, tool_calls, total_tool_calls, total_input, total_output, last_tool_name
 
-    def _format_terminal_tool_message(self, tool_name, result):
+    def _model_label(self, model):
+        try:
+            ir_model = self.env['ir.model'].search([('model', '=', model)], limit=1)
+            return ir_model.name if ir_model else (model or 'record')
+        except Exception:
+            return model or 'record'
+
+    def _field_labels(self, model, field_names):
+        field_names = [f for f in field_names if f]
+        try:
+            fget = self.env[model].fields_get(field_names, ['string'])
+            return {f: fget.get(f, {}).get('string', f) for f in field_names}
+        except Exception:
+            return {f: f for f in field_names}
+
+    def _build_terminal_block(self, tool_name, result, arguments=None):
+        """Structured {_type: fields/table} block describing a completed write
+        action, in place of a bare 'Record updated successfully' sentence — shows
+        the actual field values so the user can see what really happened."""
+        arg_dict = arguments or {}
+        res = result.get('result', {}) if isinstance(result, dict) else {}
+
         if tool_name == 'create_echart':
-            res = result.get('result', {}) if isinstance(result, dict) else {}
-            name = res.get('name', 'Chart')
-            chart_id = res.get('id', '')
-            return f'Chart "{name}" created successfully (ID: {chart_id}). View it in the MCP Charts app.'
-        elif tool_name == 'create_record':
-            res = result.get('result', {}) if isinstance(result, dict) else {}
-            record_id = res.get('id', '')
-            model_name = res.get('model', '')
-            display_name = ''
-            if record_id and model_name:
+            chart = self.env['mcp.echart'].browse(res.get('id')) if res.get('id') else self.env['mcp.echart']
+            if chart.exists():
+                return {
+                    '_type': 'chart',
+                    'title': res.get('name', 'Chart'),
+                    'subtitle': f"Chart · ID #{chart.id}",
+                    'chart_id': chart.id,
+                    'options': chart.options or '{}',
+                }
+            return {
+                '_type': 'fields',
+                'title': res.get('name', 'Chart'),
+                'subtitle': f"Chart created · ID #{res.get('id', '')}",
+                'data': {k: v for k, v in {
+                    'Type': arg_dict.get('chart_type'),
+                    'Model': arg_dict.get('model'),
+                }.items() if v},
+            }
+
+        if tool_name == 'create_record':
+            model = arg_dict.get('model') or res.get('model', '')
+            record_id = res.get('id')
+            values = arg_dict.get('values') or {}
+            data, display_name = {}, ''
+            if model and record_id:
                 try:
-                    display_name = self.env[model_name].browse(record_id).display_name or ''
+                    rec = self.env[model].browse(record_id)
+                    display_name = rec.display_name or ''
+                    field_names = [f for f in values.keys() if f in rec._fields]
+                    if field_names:
+                        row = rec.read(field_names)[0]
+                        labels = self._field_labels(model, field_names)
+                        data = {labels[f]: row.get(f) for f in field_names}
                 except Exception:
                     pass
-            name_part = f' "{display_name}"' if display_name else ''
-            return f'Record{name_part} created successfully (ID: {record_id}).'
-        elif tool_name == 'update_record':
-            return 'Record(s) updated successfully.'
-        elif tool_name == 'delete_record':
-            return 'Record(s) deleted successfully.'
-        return 'Operation completed successfully.'
+            return {
+                '_type': 'fields',
+                'title': display_name or self._model_label(model),
+                'subtitle': f"Created in {self._model_label(model)} · ID #{record_id}",
+                'data': data or {'ID': record_id},
+            }
+
+        if tool_name == 'update_record':
+            model = arg_dict.get('model', '')
+            res_ids = arg_dict.get('res_ids') or []
+            values = arg_dict.get('values') or {}
+            try:
+                recs = self.env[model].browse(res_ids).exists()
+                field_names = [f for f in values.keys() if f in recs._fields]
+                if recs and field_names:
+                    labels = self._field_labels(model, field_names)
+                    rows_data = recs.read(field_names)
+                    if len(rows_data) == 1:
+                        row = rows_data[0]
+                        return {
+                            '_type': 'fields',
+                            'title': recs.display_name or self._model_label(model),
+                            'subtitle': f"Updated · ID #{row.get('id')}",
+                            'data': {labels[f]: row.get(f) for f in field_names},
+                        }
+                    by_id = {row['id']: row for row in rows_data}
+                    rows = []
+                    for rec in recs:
+                        row = by_id.get(rec.id, {})
+                        rows.append([rec.display_name or rec.id] + [row.get(f) for f in field_names])
+                    return {
+                        '_type': 'table',
+                        'title': f"{len(rows_data)} record(s) updated in {self._model_label(model)}",
+                        'headers': ['Record'] + [labels[f] for f in field_names],
+                        'rows': rows,
+                    }
+            except Exception:
+                pass
+            return {
+                '_type': 'fields',
+                'title': f"Updated in {self._model_label(model)}",
+                'subtitle': f"{len(res_ids)} record(s)",
+                'data': {'IDs': ', '.join(str(i) for i in res_ids)} if res_ids else {},
+            }
+
+        if tool_name == 'delete_record':
+            model = arg_dict.get('model', '')
+            res_ids = arg_dict.get('res_ids') or []
+            return {
+                '_type': 'fields',
+                'title': f"Deleted from {self._model_label(model)}",
+                'subtitle': f"{len(res_ids)} record(s)",
+                'data': {'IDs': ', '.join(str(i) for i in res_ids)} if res_ids else {},
+            }
+
+        return {'_type': 'text', 'content': 'Operation completed successfully.'}
+
+    def _format_terminal_tool_message(self, tool_name, result, arguments=None):
+        return json.dumps(self._build_terminal_block(tool_name, result, arguments))
 
     def _format_terminal_tool_messages_bulk(self, terminal_results):
-        """Summary message when multiple terminal tool calls ran in parallel."""
-        create_results = [(tn, r) for tn, r in terminal_results if tn == 'create_record']
-        other_results = [(tn, r) for tn, r in terminal_results if tn != 'create_record']
-
-        lines = []
-        if create_results:
-            # Group by model
-            by_model = {}
-            for _, r in create_results:
-                res = r.get('result', {}) if isinstance(r, dict) else {}
-                model = res.get('model', 'unknown')
-                record_id = res.get('id', '')
-                display_name = ''
-                if record_id and model != 'unknown':
-                    try:
-                        display_name = self.env[model].browse(record_id).display_name or ''
-                    except Exception:
-                        pass
-                by_model.setdefault(model, []).append((record_id, display_name))
-
-            for model, records in by_model.items():
-                model_label = model
-                try:
-                    ir_model = self.env['ir.model'].search([('model', '=', model)], limit=1)
-                    if ir_model:
-                        model_label = ir_model.name
-                except Exception:
-                    pass
-                lines.append(f'{len(records)} record(s) created in {model_label}:')
-                for rid, dname in records:
-                    label = f'"{dname}"' if dname else f'ID {rid}'
-                    lines.append(f'  • {label} (ID: {rid})')
-
-        for tool_name, _ in other_results:
-            lines.append(self._format_terminal_tool_message(tool_name, {}))
-
-        return '\n'.join(lines) if lines else 'Operations completed successfully.'
+        """Structured summary when multiple terminal tool calls ran in parallel."""
+        blocks = [self._build_terminal_block(tn, r, args) for tn, r, args in terminal_results]
+        if len(blocks) == 1:
+            return json.dumps(blocks[0])
+        return json.dumps({'_type': 'mixed', 'blocks': blocks})
 
     def _format_tool_success_html(self, tool_name, arguments, result_data):
         """

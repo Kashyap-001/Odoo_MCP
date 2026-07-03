@@ -363,7 +363,7 @@
 }
 
 .mcp-history-inner {
-  max-width: 800px;
+  max-width: 1100px;
   margin: 0 auto;
   width: 100%;
   display: flex;
@@ -778,6 +778,23 @@ h5.mcp-md-h { font-size: 0.9rem; }
   max-height: 320px;
   border: 1px solid #e2e8f0;
   margin-top: 0.25rem;
+}
+
+.mcp-ai-chart {
+  width: 100%;
+  height: 420px;
+  margin-top: 0.25rem;
+}
+
+/* A chart isn't a sentence — trying to fit it inside the normal narrow
+   chat-bubble width (even at a bigger percentage/px cap) still visually reads
+   as "boxed in". Let it break out of the bubble shape entirely and use the
+   full conversation column width (bounded only by .mcp-history-inner's own
+   max-width), the way ChatGPT/Claude let wide tables/code blocks stretch
+   further than a plain reply does. */
+.mcp-assistant-msg:has(.mcp-ai-chart) {
+  max-width: 100%;
+  width: 100%;
 }
 
 .mcp-ai-attachment {

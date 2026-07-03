@@ -14,6 +14,7 @@ Dependencies:
   - unittest.mock — Mocking external APIs
 """
 
+import base64
 import json
 from datetime import datetime, date
 from unittest import mock
@@ -185,6 +186,34 @@ class TestToolDispatch(TransactionCase):
         self.assertEqual(result_data['success'], False)
         self.assertIn('error', result_data)
 
+    def test_dispatch_read_attachment_serializes_binary_data(self):
+        """ir.attachment.datas comes back from search_read as base64-encoded
+        bytes, not str — json.dumps can't serialize bytes. Regression test for
+        the 2026-07-03 'Object of type bytes is not JSON serializable' crash
+        on any read_attachment call for a small enough attachment."""
+        attachment = self.env['ir.attachment'].create({
+            'name': 'test.png',
+            'datas': base64.b64encode(b'fake-png-bytes'),
+            'mimetype': 'image/png',
+        })
+
+        tool = self.env.ref('mcp_gateway.tool_read_attachment')
+
+        from ..mcp.tools.dispatcher import ToolDispatcher
+        dispatcher = ToolDispatcher()
+
+        result = dispatcher.dispatch(
+            tool,
+            {'attachment_id': attachment.id},
+            self.env,
+            self.env.user,
+        )
+
+        result_data = json.loads(result)
+        self.assertTrue(result_data['success'], result_data.get('error'))
+        self.assertTrue(result_data['result']['data_included'])
+        self.assertIsInstance(result_data['result']['data_base64'], str)
+
 
 class TestToolDescriptions(TransactionCase):
     """Test description standard for most-used tools."""
@@ -211,8 +240,15 @@ class TestToolDispatcherDatetime(TransactionCase):
 
     @mock.patch('odoo.models.BaseModel.search_read')
     def test_calendar_event_datetime_parsing(self, mock_search_read):
-        """Test search_read parses datetime strings correctly."""
-        mock_search_read.return_value = [{'id': 1, 'name': 'Test Event'}]
+        """Test search_read parses datetime strings correctly.
+
+        Uses mail.message (from the 'mail' dependency, always installed) rather
+        than calendar.event — calendar isn't in this module's depends, so the
+        model doesn't exist at all in a minimal test DB, regardless of mocking
+        search_read. Same class of fix as the 2026-07-02 sale_order_count test
+        gotcha: only rely on models this module's own dependency graph guarantees.
+        """
+        mock_search_read.return_value = [{'id': 1, 'subject': 'Test Message'}]
 
         tool = self.env['mcp.tool'].create({
             'name': 'calendar_test',
@@ -220,13 +256,13 @@ class TestToolDispatcherDatetime(TransactionCase):
             'description': 'Calendar test description',
             'category_id': self.category.id,
             'tool_type': 'odoo',
-            'odoo_model': 'calendar.event',
+            'odoo_model': 'mail.message',
             'odoo_method': 'search_read',
         })
 
         result = self.dispatcher.dispatch(
             tool,
-            {'model': 'calendar.event', 'domain': [['start', '>=', '2025-01-15 00:00:00']]},
+            {'model': 'mail.message', 'domain': [['date', '>=', '2025-01-15 00:00:00']]},
             self.env,
             self.env.user,
         )

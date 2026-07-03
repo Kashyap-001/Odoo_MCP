@@ -61,6 +61,128 @@ class TestGatewayRun(TransactionCase):
         self.assertEqual(result['input_tokens'], 10)
         self.assertEqual(result['output_tokens'], 5)
 
+    @mock.patch('odoo.addons.mcp_gateway.mcp.providers.openai.OpenAIAdapter.call')
+    def test_gateway_retries_on_fabricated_action_claim(self, mock_call):
+        """A reply claiming a write happened ('Updated the...') with zero tool
+        calls is fabricated — the gateway must force a retry even when the
+        user's own wording doesn't match the action_words list (regression
+        test for the 2026-07-03 'change email' hallucination bug)."""
+        mock_call.side_effect = [
+            {
+                'text': "Updated the email of Mitchell Admin to newadmin@example.com.",
+                'stop_reason': 'end_turn',
+                'tool_calls': [],
+                'input_tokens': 10,
+                'output_tokens': 5,
+            },
+            {
+                'text': "I was unable to make that change, please confirm the record.",
+                'stop_reason': 'end_turn',
+                'tool_calls': [],
+                'input_tokens': 10,
+                'output_tokens': 5,
+            },
+        ]
+
+        gateway = McpGateway(self.env, self.env.user)
+        gateway.run(
+            agent_id=self.agent.id,
+            user_message="Xqz Mitchell Admin's email to newadmin@example.com.",  # deliberately avoids every action_words entry
+        )
+
+        self.assertEqual(mock_call.call_count, 2, "fabricated success claim must trigger a retry")
+
+    @mock.patch('odoo.addons.mcp_gateway.mcp.providers.openai.OpenAIAdapter.call')
+    def test_gateway_hallucination_check_uses_latest_user_message(self, mock_call):
+        """The hallucination check must scan for the LATEST user message, not
+        the first one in `messages` — a synthetic "What is today's date?" pair
+        is always inserted at index 1 of every turn's history (see the
+        date-injection block in _call_provider_with_tools), so a forward scan
+        always found that instead of the real triggering message, silently
+        breaking has_action_word on every turn (regression test for the
+        2026-07-03 bug where the warning log showed the date-check question
+        instead of the user's actual avatar-setting request)."""
+        mock_call.side_effect = [
+            {
+                # Honest reply, no fabrication verb, no 'success' — only
+                # has_action_word (from the REAL user message) should trigger retry.
+                'text': "I need more details before proceeding.",
+                'stop_reason': 'end_turn',
+                'tool_calls': [],
+                'input_tokens': 10,
+                'output_tokens': 5,
+            },
+            {
+                'text': "Understood, let me look that up.",
+                'stop_reason': 'end_turn',
+                'tool_calls': [],
+                'input_tokens': 10,
+                'output_tokens': 5,
+            },
+        ]
+
+        gateway = McpGateway(self.env, self.env.user)
+        gateway.run(
+            agent_id=self.agent.id,
+            user_message="Please delete the record for Mitchell Admin.",
+        )
+
+        self.assertEqual(
+            mock_call.call_count, 2,
+            "action word in the LATEST user message must trigger a retry, "
+            "even though a synthetic 'What is today's date?' user message "
+            "was inserted earlier in history"
+        )
+
+    @mock.patch('odoo.addons.mcp_gateway.mcp.providers.openai.OpenAIAdapter.call')
+    def test_gateway_retries_on_generic_success_claim(self, mock_call):
+        """The generic 'success'/'successfully' catch-all must fire even when
+        the verb itself isn't in fabrication_verbs (regression test for the
+        2026-07-03 'note posted on chatter' hallucination — the model used
+        'posted', which the first fix's verb list didn't cover either)."""
+        mock_call.side_effect = [
+            {
+                'text': "Note filed on the record successfully.",  # 'filed' is not in fabrication_verbs
+                'stop_reason': 'stop',
+                'tool_calls': [],
+                'input_tokens': 10,
+                'output_tokens': 5,
+            },
+            {
+                'text': "I was unable to file that note, please confirm the record.",
+                'stop_reason': 'stop',
+                'tool_calls': [],
+                'input_tokens': 10,
+                'output_tokens': 5,
+            },
+        ]
+
+        gateway = McpGateway(self.env, self.env.user)
+        gateway.run(
+            agent_id=self.agent.id,
+            user_message="Xqz a note on Mitchell Admin's chatter saying hello.",  # avoids action_words too
+        )
+
+        self.assertEqual(mock_call.call_count, 2, "generic 'success' claim must trigger a retry")
+
+    def test_terminal_block_create_echart_returns_chart_type(self):
+        """create_echart's terminal reply must carry the real options JSON from
+        the DB record (not just a name/type/model summary) so the frontend can
+        render a live chart instead of a bare confirmation card."""
+        chart = self.env['mcp.echart'].create({
+            'name': 'Test Chart',
+            'options': '{"title": {"text": "Test"}, "series": [{"type": "bar"}]}',
+        })
+
+        gateway = McpGateway(self.env, self.env.user)
+        block = gateway._build_terminal_block(
+            'create_echart',
+            {'result': {'id': chart.id, 'name': chart.name}},
+        )
+
+        self.assertEqual(block['_type'], 'chart')
+        self.assertEqual(block['options'], chart.options)
+
     def _create_test_user(self, name, login, groups=None):
         self.env.cr.execute("""
             SELECT column_name 

@@ -484,7 +484,9 @@ class ToolDispatcher:
                 datas_rows = env['ir.attachment'].search_read([('id', '=', att_id)], ['datas'])
                 raw = datas_rows[0].get('datas') if datas_rows else None
                 if raw:
-                    data_base64 = raw
+                    # ir.attachment.datas comes back as base64-encoded bytes, not str —
+                    # json.dumps can't serialize bytes, decode (safe, base64 is ASCII).
+                    data_base64 = raw.decode('ascii') if isinstance(raw, bytes) else raw
         elif att.get('type') == 'url':
             warnings.append('URL-type attachment — use the url field directly.')
         att['url'] = f'/web/content/{att_id}?download=true'

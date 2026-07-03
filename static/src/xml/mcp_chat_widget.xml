@@ -419,9 +419,15 @@
                 <div class="mcp-ai-html"><t t-out="message.structuredData.content"/></div>
             </t>
             <t t-elif="message.structuredData._type === 'image'">
-                <img t-att-src="message.structuredData.url"
+                <img t-att-src="this._cacheBustUrl(message.structuredData.url, message.id)"
                      t-att-alt="message.structuredData.alt || 'Image'"
                      class="mcp-ai-image img-fluid rounded"/>
+            </t>
+            <t t-elif="message.structuredData._type === 'chart'">
+                <t t-if="message.structuredData.title">
+                    <div class="mcp-ai-response-title"><t t-esc="message.structuredData.title"/></div>
+                </t>
+                <EchartPreview optionsJson="message.structuredData.options" chartId="message.structuredData.chart_id"/>
             </t>
             <t t-elif="message.structuredData._type === 'attachment'">
                 <div class="mcp-ai-attachment">
@@ -813,6 +819,11 @@
                 </t>
             </t>
         </div>
+    </t>
+
+    <!-- Live ECharts preview inside a chat bubble — real component (not t-call) so it gets lifecycle hooks -->
+    <t t-name="mcp_gateway.EchartPreview">
+        <div class="mcp-ai-chart" t-ref="chart"/>
     </t>
 
     <!-- Message Bubble Component -->

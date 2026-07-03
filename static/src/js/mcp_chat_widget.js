@@ -1,4 +1,4 @@
-import { Component, useState, useRef, onMounted, markup } from "@odoo/owl";
+import { Component, useState, useRef, onMounted, onPatched, onWillUnmount, markup } from "@odoo/owl";
 import { rpc } from "@web/core/network/rpc";
 import { useService } from "@web/core/utils/hooks";
 import { user } from "@web/core/user";
@@ -79,16 +79,28 @@ export class ChatWidget extends Component {
             return sessions;
         }
         const sessionIds = sessions.map(s => s.id);
-        const lastMessages = await this.orm.searchRead(
+        // Get the single latest message id PER session via read_group, not a
+        // shared global `limit` searchRead — a shared limit across all
+        // sessionIds starves older/quieter sessions out of the top-N pool
+        // entirely once total message volume grows past the limit, silently
+        // dropping them from the sidebar (they get filtered out below since
+        // they'd never get a msgMap entry).
+        const groups = await this.orm.readGroup(
             "mcp.session.message",
             [["session_id", "in", sessionIds], ["role", "in", ["user", "assistant"]]],
-            ["session_id", "role", "content"],
-            { order: "create_date desc", limit: 60 }
+            ["id:max"],
+            ["session_id"]
         );
+        const latestIds = groups.map(g => g.id).filter(Boolean);
         const msgMap = {};
-        for (const msg of lastMessages) {
-            const sid = msg.session_id[0];
-            if (!msgMap[sid]) {
+        if (latestIds.length) {
+            const lastMessages = await this.orm.searchRead(
+                "mcp.session.message",
+                [["id", "in", latestIds]],
+                ["session_id", "content"],
+            );
+            for (const msg of lastMessages) {
+                const sid = msg.session_id[0];
                 const text = msg.content || '';
                 const isStructured = text.charAt(0) === '{' && (text.includes('"_type"') || text.includes('"_is_structured"'));
                 msgMap[sid] = isStructured
@@ -693,6 +705,18 @@ export class ChatWidget extends Component {
         return markup(this._renderMarkdown(content || ''));
     }
 
+    // Odoo's /web/image/<model>/<id>/<field> URLs are the same for every write —
+    // browsers cache them by URL, so redisplaying one right after an update (e.g.
+    // set_binary_field) can show the stale pre-update image. msgId (the session
+    // message's own DB id) is unique per assistant turn, so tagging the URL with
+    // it forces a fresh fetch after any write without refetching on every re-render
+    // of the SAME already-loaded message.
+    _cacheBustUrl(url, msgId) {
+        if (!url || !msgId) return url;
+        const sep = url.includes('?') ? '&' : '?';
+        return `${url}${sep}_cb=${msgId}`;
+    }
+
     _formatTableCell(cell, header) {
         const clean = cell.replace(/^\*\*|^\*|^\`|\*\*$|\*$|\`$/g, '').trim();
         const headerLower = header ? header.trim().toLowerCase() : '';
@@ -972,7 +996,105 @@ export class MessageBubble extends Component {
     static props = ["message"];
 }
 
-ChatWidget.components = { MessageBubble, Dropdown, DropdownItem };
+// Genuine child component (not a t-call) so it gets its own mount/patch/unmount
+// lifecycle — needed to call echarts.init() only after its <div> actually exists,
+// and to dispose the chart instance when the message list re-renders it away.
+export class EchartPreview extends Component {
+    static template = "mcp_gateway.EchartPreview";
+    static props = { optionsJson: { type: String, optional: true }, chartId: { type: Number, optional: true } };
+
+    setup() {
+        this.orm = useService("orm");
+        this.chartRef = useRef("chart");
+        this._chart = null;
+        this._observer = null;
+        this._resizeHandler = () => this._chart && this._chart.resize();
+        // Chat bubbles are a live view of the same mcp.echart record, not a
+        // frozen screenshot — if the user edits the chart later (color, data,
+        // type) via read_record+update_record, earlier bubbles should reflect
+        // it too. optionsJson (the snapshot captured when this message was
+        // created) is only the fallback for missing/deleted charts or old
+        // messages from before chart_id existed.
+        this._liveOptionsJson = null;
+
+        onMounted(async () => {
+            window.addEventListener("resize", this._resizeHandler);
+            this._setupObserver();
+            await this._fetchLive();
+            this._render();
+        });
+        onPatched(async () => {
+            await this._fetchLive();
+            this._render();
+        });
+        onWillUnmount(() => {
+            window.removeEventListener("resize", this._resizeHandler);
+            if (this._observer) {
+                this._observer.disconnect();
+                this._observer = null;
+            }
+            this._chart?.dispose();
+        });
+    }
+
+    async _fetchLive() {
+        if (!this.props.chartId) return;
+        try {
+            const rows = await this.orm.read("mcp.echart", [this.props.chartId], ["options"]);
+            if (rows.length && rows[0].options) this._liveOptionsJson = rows[0].options;
+        } catch (e) {
+            // Chart deleted or inaccessible — fall back to the stored snapshot.
+        }
+    }
+
+    _setupObserver() {
+        const el = this.chartRef.el;
+        if (!el || typeof ResizeObserver === "undefined") return;
+        // Chat panel layout (sidebar toggle, new messages, scroll) can still be
+        // settling when this component mounts, so the container's measured size
+        // at echarts.init() time can be smaller than its final rendered size —
+        // baking in a cramped canvas where labels overlap/get cut off. Re-render
+        // whenever the container's actual size changes, mirroring echart_field.js.
+        this._observer = new ResizeObserver(() => {
+            if (el.offsetWidth > 0 && el.offsetHeight > 0) this._render();
+        });
+        this._observer.observe(el);
+    }
+
+    _render() {
+        const el = this.chartRef.el;
+        if (!el) return;
+        // Don't init/resize into a zero-size container (still-settling layout).
+        if (el.offsetWidth === 0 || el.offsetHeight === 0) return;
+        if (typeof echarts === "undefined") {
+            el.textContent = "Chart library failed to load.";
+            return;
+        }
+        const rawOptions = this._liveOptionsJson || this.props.optionsJson;
+        if (!rawOptions) {
+            // AI referenced a chart_id but the live fetch hasn't resolved yet
+            // (or failed) and there's no stored snapshot to fall back to.
+            el.textContent = this.props.chartId ? "Loading chart…" : "No chart data.";
+            return;
+        }
+        let options;
+        try {
+            options = JSON.parse(rawOptions);
+        } catch (e) {
+            el.textContent = "Invalid chart data.";
+            return;
+        }
+        try {
+            if (!this._chart) this._chart = echarts.init(el, null, { renderer: "canvas" });
+            this._chart.resize();
+            this._chart.setOption(options, true);
+        } catch (e) {
+            el.textContent = "Failed to render chart.";
+        }
+    }
+}
+
+ChatWidget.components = { MessageBubble, Dropdown, DropdownItem, EchartPreview };
 
 import { registry } from "@web/core/registry";
 registry.category("actions").add("mcp_gateway.chat", ChatWidget);

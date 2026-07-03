@@ -156,8 +156,27 @@ class AnthropicAdapter(AbstractProvider):
             raise UserError(_('Failed to parse Anthropic response: %s') % str(e))
 
     def format_tool_calls(self, tool_calls: list) -> list:
-        """Anthropic handles tool_use inside content blocks; no tool_calls key needed in history."""
-        return []
+        """OpenAI-canonical shape — gateway.py's normalize_history_for_format() converts
+        this into native tool_use blocks before build_payload() runs. Returning [] here
+        (previous behavior) meant that conversion had nothing to convert, silently
+        dropping the assistant's tool_use block from history and breaking any
+        multi-tool-call conversation."""
+        import json as _json
+        return [
+            {
+                'id': tc.get('id', f'tc_{i}'),
+                'type': 'function',
+                'function': {
+                    'name': tc.get('name', ''),
+                    'arguments': (
+                        tc.get('arguments', '{}')
+                        if isinstance(tc.get('arguments'), str)
+                        else _json.dumps(tc.get('arguments', {}))
+                    ),
+                }
+            }
+            for i, tc in enumerate(tool_calls)
+        ]
 
     def format_tool_result(self, tool_call_id: str, tool_name: str, result: str) -> dict:
         """Anthropic tool result: user message with tool_result content block."""

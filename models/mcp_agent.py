@@ -792,6 +792,11 @@ class Agent(models.Model):
         """
         Compute union of tools from tool sets and direct tools.
 
+        If neither is set, defaults to every active tool — same "empty means
+        allow all" convention used by mcp.access.rule's tool_ids, so a newly
+        created agent isn't silently toolless until someone remembers to
+        assign a Tool Set.
+
         Returns:
             None — sets effective_tool_ids field (computed, not stored)
         """
@@ -799,6 +804,8 @@ class Agent(models.Model):
             tools = agent.tool_ids
             for tool_set in agent.tool_set_ids:
                 tools = tools | tool_set.tool_ids
+            if not agent.tool_ids and not agent.tool_set_ids:
+                tools = self.env['mcp.tool'].search([('active', '=', True)])
             agent.effective_tool_ids = tools
 
     @api.depends('provider', 'api_key')

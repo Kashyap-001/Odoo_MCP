@@ -62,6 +62,7 @@ Requirements:
     ],
     'assets': {
         'web.assets_backend': [
+            'mcp_gateway/static/lib/echarts.min.js',
             'mcp_gateway/static/src/css/mcp_chat.css',
             'mcp_gateway/static/src/js/mcp_chat_widget.js',
             'mcp_gateway/static/src/xml/mcp_chat_widget.xml',
