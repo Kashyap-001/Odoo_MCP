@@ -1,5 +1,51 @@
 # CHANGELOG
 
+## [18.0.2.0.4] - Improvements Pass
+
+### Added
+- Agent model dropdown backed by `mcp.model.option` (Many2one, auto-discovered from provider API where possible) replacing free-text model selection
+- Grok (xAI) and OpenCode providers — 6 providers total
+- Built-in tool library grown from 14 to 23 tools across the same 3 default categories
+- Session page: search box, kebab menu (pin/rename/export transcript/delete)
+- Two-way webhooks: inbound `/mcp/webhook/<token>` plus an optional outbound POST back to n8n with the AI's reply after each run
+- Prompt templates with placeholder substitution
+- Live ECharts creation (`create_echart` tool) with a live chart preview rendered directly in chat bubbles; companion `mcp_charts` module (gallery, Style Editor, public share links)
+- Structured response types beyond plain text: table, stats, list, fields, cards, image, html, chart, mixed
+- `AbstractProvider` gained two required abstract methods — `format_tool_calls()` and `format_tool_result()` — replacing per-format `if/elif` branches in `gateway.py`; every provider must implement both or the class is uninstantiable
+
+### Changed
+- Provider API retries: 2 → 3 attempts, backoff 1s flat → `2s * (attempt + 1)`
+- Tool execution failures now return structured `{_type: "error"}` JSON blocks instead of plain text, so the frontend renders a proper error card
+- Write-tool confirmations (`create_record`/`update_record`/`delete_record`/`create_echart`) now return structured field/table cards with real post-write data instead of a bare sentence
+
+### Removed
+- Dead ORM auto-trigger fields on webhook triggers (`trigger_model`, `trigger_on`, `trigger_fields`, `domain`) — never implemented, HTTP-only via n8n is the supported pattern (migration `18.0.2.0.4`)
+- `mcp.issue` internal bug tracker model and its views (migration `18.0.2.0.3`)
+- `code_search`/`code_read` tools (unused)
+
+### Fixed
+- Hallucination-retry safety net was checking the wrong response key (`finish_reason` instead of every provider's actual `stop_reason`) and had never fired since the first commit; also fixed a second bug where it scanned for the wrong (synthetic date-injection) user message instead of the latest real one
+- `AnthropicAdapter.format_tool_calls()` returned `[]` unconditionally, breaking any native-Anthropic session on its second tool call
+- `GeminiAdapter` didn't implement the (then-named) abstract `parse_response` method, making the whole adapter uninstantiable — every real Gemini call crashed before Gemini-specific tool-calling bugs even mattered
+- SSRF on `set_binary_field` (URL/IP validation added), stored XSS via unsanitized `_type:"html"` LLM content
+- Agents defaulted to zero tools on creation; now default to all active tools when both `tool_ids` and `tool_set_ids` are empty, matching `mcp.access.rule`'s existing "empty = allow all" convention
+- Sidebar/search sessions silently disappearing under load (shared `limit: 60` preview query starved older sessions of a preview row)
+- Several binary-attachment-as-bytes-vs-JSON crashes (`read_attachment`, `execute_orm`'s `read_excel`, `get_attachments`)
+
+## [18.0.2.0.3] - RBAC & Session UI
+- Group-based menu restrictions across all 18 menu items (User/Manager/Admin tiers)
+- Default access rules seeded for User and Manager groups
+- Admin UI rewrite for access rules (Who/What/Permissions tabs)
+- Removed `mcp.issue` internal bug tracker (migration `18.0.2.0.3`)
+- Tool Scan Wizard fixes: skip transient models, drop invalid `write`/`action_confirm` scan targets, fix missing `json` import
+- Stdio MCP server support (JSON-RPC over subprocess, with read timeouts)
+
+## [18.0.2.0.2] - Grok Provider Rename
+- Renamed `minimax` provider to `grok` (migration `18.0.2.0.2` updates existing `mcp.agent`/`mcp.model.option` rows)
+
+## [18.0.2.0.1] - Model Selection Field Migration
+- `model_name` selection changed from free-text Selection to a Many2one against `mcp.model.option` (migration `18.0.2.0.1` drops and recreates the column)
+
 ## [18.0.1.0.0] - Initial Release
 
 ### Added

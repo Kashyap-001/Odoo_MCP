@@ -199,7 +199,22 @@ class MyProviderAdapter(AbstractProvider):
         response = requests.get('https://api.myprovider.com/models', headers=headers, timeout=10)
         response.raise_for_status()
         return [m['id'] for m in response.json()['models']]
+
+    def format_tool_calls(self, tool_calls: list) -> list:
+        """Shape tool_calls for the assistant history entry. OpenAI-wire-format
+        providers (OpenAI/Ollama/Grok/OpenCode) share this exact implementation."""
+        return [
+            {'id': c['id'], 'type': 'function', 'function': {'name': c['name'], 'arguments': c['arguments']}}
+            for c in tool_calls
+        ]
+
+    def format_tool_result(self, tool_call_id: str, tool_name: str, result: str) -> dict:
+        """Build the message reporting a tool's result back to the provider."""
+        return {'role': 'tool', 'tool_call_id': tool_call_id, 'name': tool_name, 'content': result}
 ```
+
+`format_tool_calls`/`format_tool_result` are `@abstractmethod` on `AbstractProvider` — Python's
+ABC raises `TypeError` at instantiation if either is missing, so skipping them isn't an option.
 
 ### Step 2: Register in Models
 Update `models/mcp_agent.py` — add to provider field selection:
@@ -209,6 +224,8 @@ provider = fields.Selection([
     ('openai', 'OpenAI'),
     ('gemini', 'Google Gemini'),
     ('ollama', 'Ollama (local)'),
+    ('grok', 'Grok (xAI)'),
+    ('opencode', 'OpenCode AI'),
     ('myprovider', 'MyProvider'),  # Add here
 ], required=True)
 ```
@@ -223,6 +240,8 @@ PROVIDER_MAP = {
     'openai': OpenAIAdapter,
     'gemini': GeminiAdapter,
     'ollama': OllamaAdapter,
+    'grok': GrokAdapter,
+    'opencode': OpenCodeAdapter,
     'myprovider': MyProviderAdapter,  # Add here
 }
 ```

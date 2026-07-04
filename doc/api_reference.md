@@ -211,23 +211,23 @@ I found a customer. Now I'll create the sales order...
 
 ### POST /mcp/webhook/<token>
 
-External webhook endpoint for triggering agent on model changes.
+External trigger endpoint — invokes the agent configured on the matching `mcp.webhook.trigger`.
+There is no ORM auto-trigger (no create/write/delete hook); this is HTTP-only, meant to be
+called from an external scheduler like n8n (Schedule Trigger → HTTP Request node).
 
 **Parameters:**
-- `token` (str, path): Webhook token (auto-generated)
+- `token` (str, path): Webhook token (auto-generated per trigger)
 
-**Request Body:**
+**Request Body (all fields optional):**
 ```json
 {
   "model": "crm.lead",
-  "record_id": 123,
-  "event": "create",
-  "fields": {
-    "name": "New Lead",
-    "email": "lead@example.com"
-  }
+  "record_id": 123
 }
 ```
+`model`/`record_id` are both optional and only used to attach a specific record for context
+injection — post `{}` for a recordless/scheduled run. There is no `event`/`fields` payload; the
+agent's `message_template` is the prompt sent, not derived from posted field data.
 
 **Response:**
 ```json
@@ -237,22 +237,24 @@ External webhook endpoint for triggering agent on model changes.
   "reply": "New lead created. I'll schedule a follow-up..."
 }
 ```
+On failure: `{"status": "error", "error": "..."}` (invalid token, record not found, or any
+exception during the run — caught and returned as JSON, not an HTTP error status).
 
-**Errors:**
-- 404: Invalid webhook token
-- 400: Missing model or record_id
-- 409: Record not found or model mismatch
+**Example (curl, recordless/scheduled):**
+```bash
+curl -X POST http://localhost:8069/mcp/webhook/abc123xyz789 \
+  -H "Content-Type: application/json" -d '{}'
+```
 
-**Example (curl):**
+**Example (curl, with record context):**
 ```bash
 curl -X POST http://localhost:8069/mcp/webhook/abc123xyz789 \
   -H "Content-Type: application/json" \
-  -d '{
-    "model": "crm.lead",
-    "record_id": 42,
-    "event": "create"
-  }'
+  -d '{"model": "crm.lead", "record_id": 42}'
 ```
+
+If `outbound_url` is set on the trigger, the reply is also POSTed there (`Authorization: Bearer
+<outbound_secret>` if set) after the run completes — see `models/mcp_webhook_trigger.py`.
 
 ---
 
@@ -390,7 +392,7 @@ Agent configuration with LLM provider settings.
 
 **Fields:**
 - `name` — Agent display name
-- `provider` — LLM provider ('anthropic', 'openai', 'gemini', 'ollama')
+- `provider` — LLM provider ('anthropic', 'openai', 'gemini', 'ollama', 'grok', 'opencode')
 - `api_key` — Encrypted API key
 - `model_name` — Model identifier
 - `system_prompt` — System/initial prompt
@@ -468,6 +470,25 @@ Token usage tracking.
 - `cost_per_1k_output` — Rate
 - `estimated_cost_usd` — Total cost
 
+### mcp.webhook.trigger
+HTTP-only trigger config (no ORM auto-trigger — see [Webhook Usage](#webhook-usage)).
+
+**Fields:**
+- `agent_id` — Agent to invoke
+- `message_template` — Prompt text sent to the agent
+- `token` — Inbound webhook token (auto-generated)
+- `outbound_url` / `outbound_secret` — Optional POST-back to n8n after the run
+- `last_triggered` / `trigger_count` — Usage tracking
+
+### mcp.echart
+AI- or user-created ECharts chart definition (`mcp_charts` module).
+
+**Fields:**
+- `name` — Chart title
+- `options` — Full ECharts option JSON (dataset.source + series/xAxis/yAxis etc.)
+- `data_code` — Optional Python snippet (safe_eval sandbox) that computes `options` from live ORM data
+- `is_public` / `public_token` / `public_url` — Public share link fields
+
 ---
 
 ## Error Codes
@@ -504,23 +525,20 @@ To increase:
 
 ### Setup
 
-1. Create webhook trigger: **AI Gateway → Configuration → Webhooks → Create**
-2. Select model to trigger on (e.g., crm.lead)
-3. Select agent to call
-4. Copy webhook URL
+1. Create webhook trigger: **AI Gateway → Webhook Triggers → Create**
+2. Select agent to call, write a `message_template`
+3. Click **Generate Token**, copy the inbound webhook URL
+4. (Optional) set `outbound_url`/`outbound_secret` to have the reply POSTed to n8n after the run
 
 ### Usage
 
-POST to webhook URL when record changes:
+Call the webhook URL from any scheduler (n8n Schedule Trigger → HTTP Request node is the
+supported pattern — there is no Odoo-side create/write hook):
 
 ```bash
 curl -X POST https://myodoo.com/mcp/webhook/abc123def456 \
-  -H "Content-Type: application/json" \
-  -d '{
-    "model": "crm.lead",
-    "record_id": 42,
-    "event": "create"
-  }'
+  -H "Content-Type: application/json" -d '{}'
 ```
 
-Agent will be called asynchronously with context injected from record.
+Pass `{"model": "crm.lead", "record_id": 42}` instead of `{}` to inject a specific record's
+fields into context. The agent runs synchronously and the reply is returned in the response body.

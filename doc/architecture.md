@@ -54,12 +54,17 @@ The AI Gateway is a three-layer system orchestrating AI agent interactions withi
 │  • build_payload() — Message formatting                    │
 │  • parse_response() — Format standardization               │
 │  • get_available_models() — Model list                     │
+│  • format_tool_calls() — Assistant history entry shape      │
+│  • format_tool_result() — Tool-result message shape         │
+│  (all 6 are @abstractmethod — TypeError if any is missing) │
 │                                                             │
 │ Implementations:                                           │
 │  • AnthropicProvider (Claude API)                          │
 │  • OpenAIProvider (GPT API)                                │
 │  • GeminiProvider (Gemini API)                             │
 │  • OllamaProvider (Local models)                           │
+│  • GrokProvider (xAI API)                                  │
+│  • OpenCodeProvider (OpenCode API)                         │
 │                                                             │
 │ All providers:                                             │
 │  • Return standardized dict: {text, stop_reason,          │
@@ -74,6 +79,8 @@ The AI Gateway is a three-layer system orchestrating AI agent interactions withi
 │ • OpenAI GPT (OpenAI)                                      │
 │ • Gemini API (Google)                                      │
 │ • Ollama Local (local-llm)                                 │
+│ • Grok API (xAI)                                           │
+│ • OpenCode API                                             │
 │ • External HTTP APIs (via tool dispatch)                   │
 │ • Odoo ORM (built-in tools)                               │
 └─────────────────────────────────────────────────────────────┘
@@ -99,9 +106,13 @@ Inject context:
   • Memory summaries from past sessions
   ↓
 Provider call:
-  • Format messages (Anthropic/OpenAI/Gemini/Ollama style)
+  • Format messages (each provider handles its own wire format via
+    format_tool_calls()/format_tool_result() — no more format-specific
+    if/elif branching in the gateway)
   • Include tool definitions
-  • Retry on 500/429/timeout
+  • Retry on 500/429/timeout (2 retries in AbstractProvider.call(),
+    plus an outer 3-retry/2s-4s-6s-backoff wrapper in gateway.py for
+    providers that return an in-band error string instead of raising)
   ↓
 Tool loop (if stop_reason="tool_call"):
   • Dispatcher routes to Odoo ORM / HTTP / MCP
@@ -151,6 +162,18 @@ mcp.tool (tool_type='mcp_server')
     → result = response.json()
     → return JSON
 ```
+
+Stdio-based MCP servers (spawned as a subprocess instead of called over HTTP) use the same
+dispatch path but speak newline-delimited JSON-RPC over stdin/stdout, with a `select()`-based
+read timeout so a hung external process can't block a worker forever.
+
+### create_echart — a special-cased terminal tool
+
+`create_echart` is an Odoo ORM tool like Path 1, but its reply is built deterministically in
+`gateway.py`'s `_build_terminal_block` (not left to the model to phrase): it re-reads the
+resulting `mcp.echart` record and returns a `{_type: "chart", chart_id, options}` structured
+block, which the frontend renders as a live ECharts instance in the chat bubble rather than a
+static image or text summary.
 
 ## Access Control Model
 

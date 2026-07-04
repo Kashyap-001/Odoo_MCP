@@ -82,7 +82,35 @@ class MyAIProvider(AbstractProvider):
             'myai-medium',
             'myai-small',
         ]
+
+    def format_tool_calls(self, tool_calls: list) -> list:
+        """Shape tool_calls for the assistant history entry sent back to the provider.
+        OpenAI-wire-format providers (OpenAI/Ollama/Grok/OpenCode) all return the same
+        shape here — copy one of those, not Anthropic's or Gemini's (both are unique)."""
+        return [
+            {
+                'id': call['id'],
+                'type': 'function',
+                'function': {'name': call['name'], 'arguments': call['arguments']},
+            }
+            for call in tool_calls
+        ]
+
+    def format_tool_result(self, tool_call_id: str, tool_name: str, result: str) -> dict:
+        """Build the message that reports a tool's result back to the provider."""
+        return {
+            'role': 'tool',
+            'tool_call_id': tool_call_id,
+            'name': tool_name,
+            'content': result,
+        }
 ```
+
+**Both methods are `@abstractmethod` on `AbstractProvider`** — Python's ABC machinery raises
+`TypeError` at instantiation if either is missing or misnamed. This isn't optional boilerplate:
+Gemini's adapter was uninstantiable for weeks because it implemented `_parse_response` instead of
+the required `parse_response`, and Anthropic's `format_tool_calls()` once returned `[]`
+unconditionally, silently dropping every tool call from conversation history after the first turn.
 
 ## Step 2: Register Provider
 
@@ -97,6 +125,8 @@ __all__ = [
     'OpenAIProvider',
     'GeminiProvider',
     'OllamaProvider',
+    'GrokProvider',
+    'OpenCodeProvider',
     'MyAIProvider',  # Add this
 ]
 ```
@@ -111,6 +141,8 @@ provider = fields.Selection([
     ('openai', 'OpenAI GPT'),
     ('gemini', 'Google Gemini'),
     ('ollama', 'Ollama Local'),
+    ('grok', 'Grok (xAI)'),
+    ('opencode', 'OpenCode AI'),
     ('myai', 'MyAI'),  # Add this
 ], ...)
 ```
@@ -196,8 +228,8 @@ Edit `README.md` to list new provider in Supported Providers section.
 ## Implementation Checklist
 
 - [ ] Create provider adapter (inherit AbstractProvider)
-- [ ] Implement all abstract methods
-- [ ] Register in `__init__.py`
+- [ ] Implement all 6 abstract methods (`build_headers`, `build_payload`, `parse_response`, `get_available_models`, `format_tool_calls`, `format_tool_result`) — ABC raises `TypeError` at instantiation if any is missing
+- [ ] Register in `__init__.py` (both the import and `PROVIDER_MAP`)
 - [ ] Update agent model selection field
 - [ ] Update `_onchange_provider()`
 - [ ] Update `_get_provider_instance()`
@@ -249,13 +281,16 @@ Adapt in `parse_response()` to match provider's format, then convert to standard
 
 ### Retry Strategy
 
-Base class handles retry with:
-- Max 2 attempts
-- 1s backoff on first retry
-- 2s backoff on second retry
-- Handles 429 (rate limit) and 5xx (server error)
+`AbstractProvider.call()` handles the HTTP-level retry (unless you override `call()` for
+provider-specific requirements):
+- Max 2 attempts (3 tries total)
+- Backoff `2 ** attempt` — 1s, 2s
+- Handles connection/timeout errors and 5xx/429 HTTP errors
 
-For specific provider requirements, override `call()` method.
+Separately, `gateway.py`'s turn loop wraps every `provider.call()` in its own outer retry
+(3 retries, `2s * (attempt + 1)` backoff — 2s/4s/6s) that catches providers which return an
+in-band error string (e.g. `"[Provider error: ...]"`) instead of raising — this is orchestration-level,
+not something a new provider adapter needs to implement itself.
 
 ### Timeout Configuration
 

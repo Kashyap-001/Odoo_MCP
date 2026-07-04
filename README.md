@@ -12,7 +12,7 @@ AI Gateway is a production-ready Odoo 18 module that integrates Large Language M
 **Key value propositions:**
 - No-code AI agent configuration with UI-driven setup
 - Seamless Odoo ORM integration — tools can read/write any Odoo model
-- Multi-provider support (Anthropic, OpenAI, Gemini, Ollama)
+- Multi-provider support (Anthropic, OpenAI, Gemini, Ollama, Grok, OpenCode)
 - Granular access control and audit logging
 - Token usage and cost tracking per user/agent
 - Session management with memory persistence
@@ -24,7 +24,7 @@ AI Gateway is a production-ready Odoo 18 module that integrates Large Language M
 ### Core Capabilities
 - **AI Agent Profiles** — Create and manage agent configurations with system prompts, temperature, token limits, and model selection
 - **Tool Registry** — Register Odoo models, external APIs, and custom MCP servers as callable tools
-- **Multi-Provider Support** — Anthropic Claude, OpenAI GPT, Google Gemini, and Ollama (local models)
+- **Multi-Provider Support** — Anthropic Claude, OpenAI GPT, Google Gemini, Ollama (local models), Grok (xAI), and OpenCode
 - **Tool Categories** — Organize tools by domain (Sales, Finance, HR, etc.)
 - **Tool Sets** — Bundle related tools and assign to agents
 
@@ -43,9 +43,15 @@ AI Gateway is a production-ready Odoo 18 module that integrates Large Language M
 - **Cost Tracking** — Token usage and USD cost calculated per session
 
 ### Automation
-- **Webhook Triggers** — Automatically fire agents on Odoo model create/write/delete events
-- **Jinja2 Message Templates** — Dynamic prompt rendering with record data
+- **Webhook Triggers** — Inbound HTTP endpoint (`/mcp/webhook/<token>`) to fire an agent from n8n or any scheduler; optional outbound POST back to n8n with the AI's reply after each run
+- **Message Templates** — Dynamic prompt rendering, optionally bound to a specific record
 - **Session State Machine** — Active → Done → Error state tracking
+
+### Charts & Structured Replies
+- **Live ECharts Creation** — Agents build charts via `create_echart` (bar, line, pie, donut, scatter, stacked/area bar, heatmap, funnel, radar, gauge) using an ORM-backed dataset
+- **Live Chart Preview in Chat** — Chart replies render as a real, editable ECharts instance in the chat bubble, not a static image
+- **Chart Gallery** — Companion `mcp_charts` module: kanban gallery, Style Editor (theme/dark-bg/chart-type switch), public share links
+- **Structured Response Types** — Replies render as table, stats, list, fields, cards, image, html, chart, or mixed — not just plain text
 
 ### UI/UX
 - **In-Odoo Chat Interface** — OWL 3 component for conversational agent interaction
@@ -67,11 +73,13 @@ AI Gateway is a production-ready Odoo 18 module that integrates Large Language M
 
 - **Odoo 18 Community or Enterprise** (v18.0.1.0+)
 - **Python 3.12+**
-- **Python packages:** `requests`, `cryptography`
+- **Python packages:** `requests`, `cryptography`, `httpx` (always required — install a provider SDK from `requirements.txt` only for the provider(s) you use, e.g. `anthropic`, `openai`, `google-genai`)
 - **At least one AI provider:**
   - Anthropic API key (https://console.anthropic.com), OR
   - OpenAI API key (https://platform.openai.com/api-keys), OR
   - Google Gemini API key (https://aistudio.google.com), OR
+  - xAI Grok API key (https://console.x.ai), OR
+  - OpenCode API key (https://opencode.ai), OR
   - Running Ollama instance (http://localhost:11434)
 
 ---
@@ -176,25 +184,25 @@ When exceeded, user sees: `"Rate limit of 50 calls/day exceeded. Reset at 2025-0
 
 ### Webhook Triggers
 
-Automatically invoke agents on model events:
+There is no ORM auto-trigger (no create/write/delete hook) — webhooks are invoked over HTTP, typically from an external scheduler like n8n:
 
 1. Go to **AI Gateway** → **Webhook Triggers** → **+ New**
-2. **Name:** e.g., `Auto-email on new lead`
+2. **Name:** e.g., `Daily lead follow-up`
 3. **Agent:** Select your agent
-4. **Trigger Model:** e.g., `crm.lead`
-5. **Trigger On:** `On create`
-6. **Domain:** e.g., `[['country_id.code','=','US']]` (optional filter)
-7. **Message Template:** 
+4. **Message Template:** the prompt sent to the agent, e.g.
    ```
-   New lead: {record.name}
-   Phone: {record.phone}
-   Email: {record.email_from}
-   Please draft an initial outreach email.
+   Find any CRM leads with no activity in the last 3 days and draft a follow-up email for each.
    ```
-8. Click **Generate Token** to create a webhook secret
-9. **Save**
+5. Click **Generate Token** to create the inbound webhook secret
+6. (Optional) **Outbound URL / Outbound Secret:** if set, the agent's reply is POSTed back to this URL (e.g. an n8n webhook node) as `Bearer <outbound_secret>` after the run
+7. **Save**
 
-Now whenever a US lead is created, the agent automatically generates an outreach email in a new session.
+Trigger it from n8n (Schedule Trigger → HTTP Request node) or any other caller:
+```bash
+curl -X POST https://myodoo.com/mcp/webhook/<token> -H "Content-Type: application/json" -d '{}'
+```
+
+A specific record can optionally be attached for context injection by posting `{"model": "crm.lead", "record_id": 42}` — both fields are optional; omit them entirely for a recordless/scheduled run.
 
 ### Cost Tracking
 
@@ -227,10 +235,11 @@ AI Gateway follows a **three-layer architecture:**
                  │
       ┌──────────┼──────────┬──────────┐
       │          │          │          │
-    ┌─▼──┐   ┌──▼──┐   ┌───▼──┐   ┌──▼───┐
-    │ORM │   │HTTP │   │MCP   │   │Local │
-    │    │   │API  │   │Serv. │   │Ollama│
-    └────┘   └─────┘   └──────┘   └──────┘
+    ┌─▼──┐   ┌──▼──┐   ┌───▼──┐   ┌──▼───────────────┐
+    │ORM │   │HTTP │   │MCP   │   │Anthropic/OpenAI/ │
+    │    │   │API  │   │Serv. │   │Gemini/Grok/      │
+    └────┘   └─────┘   └──────┘   │OpenCode/Ollama   │
+                                  └──────────────────┘
 ```
 
 **Full request lifecycle:**
@@ -281,7 +290,7 @@ See [doc/architecture.md](doc/architecture.md) for detailed diagrams.
 2. Click **Test Connection** to see the exact error
 3. Verify API key is copied correctly (no extra spaces)
 4. Ensure Odoo server has internet access to provider
-5. Try a different model_name (e.g., `gpt-4o` vs `gpt-4-turbo`)
+5. Try a different model_name — use the model dropdown (auto-fetched from the provider's API when a valid key is present) instead of typing one by hand
 
 ### Provider timeout (message says "Timeout after 15s")
 **Cause:** LLM provider is slow or unreachable.  

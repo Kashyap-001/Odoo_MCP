@@ -330,8 +330,6 @@ class ChatController(http.Controller):
             # Record is optional — supports scheduled/recordless triggers (e.g. n8n cron)
             record = None
             if model_name and record_id:
-                if model_name != trigger.trigger_model:
-                    return {'status': 'error', 'error': 'Model mismatch'}
                 record = http.request.env[model_name].browse(record_id)
                 if not record.exists():
                     return {'status': 'error', 'error': 'Record not found'}
