@@ -41,6 +41,8 @@
                     <div class="mcp-session-search">
                         <i class="fa fa-search mcp-session-search-icon"/>
                         <input type="text"
+                               id="mcp-session-search-input"
+                               name="mcp_session_search"
                                class="mcp-session-search-input"
                                placeholder="Search sessions..."
                                t-att-value="state.searchQuery"
@@ -193,8 +195,18 @@
                         </div>
 
                         <t t-foreach="state.messages" t-as="msg" t-key="msg_index">
-                            <t t-call="mcp_gateway.MessageBubble">
-                                <t t-set="message" t-value="msg"/>
+                            <t t-if="state.messageRenderErrors.has(msg_index)">
+                                <div class="mcp-assistant-msg mcp-render-error">
+                                    <i class="fa fa-exclamation-triangle me-2 text-warning"/>
+                                    This message couldn't be displayed.
+                                </div>
+                            </t>
+                            <t t-else="">
+                                <ErrorHandler onError="(e) => this._onMessageRenderError(msg_index, e)">
+                                    <t t-call="mcp_gateway.MessageBubble">
+                                        <t t-set="message" t-value="msg"/>
+                                    </t>
+                                </ErrorHandler>
                             </t>
                         </t>
 
@@ -233,6 +245,8 @@
 
                         <div class="mcp-input-wrapper">
                             <textarea
+                                id="mcp-message-input"
+                                name="mcp_message"
                                 class="mcp-message-input"
                                 t-ref="messageInput"
                                 placeholder="System command or query..."
@@ -252,7 +266,7 @@
                                     <button class="mcp-attach-btn" t-on-click="onAttachClick" title="Attach file" t-att-disabled="state.loading">
                                         <i class="fa fa-paperclip"/>
                                     </button>
-                                    <input type="file" class="d-none" t-ref="fileInput" t-on-change="onFileChange"/>
+                                    <input type="file" id="mcp-file-input" name="mcp_attachment" class="d-none" t-ref="fileInput" t-on-change="onFileChange"/>
                                     <button class="mcp-templates-btn"
                                             t-att-class="state.showTemplates ? 'active' : ''"
                                             t-on-click="toggleTemplates"
@@ -416,7 +430,7 @@
                 </t>
             </t>
             <t t-elif="message.structuredData._type === 'html'">
-                <div class="mcp-ai-html"><t t-out="message.structuredData.content"/></div>
+                <div class="mcp-ai-html"><t t-out="this._html(message.structuredData.content)"/></div>
             </t>
             <t t-elif="message.structuredData._type === 'image'">
                 <img t-att-src="this._cacheBustUrl(message.structuredData.url, message.id)"
@@ -427,23 +441,29 @@
                 <t t-if="message.structuredData.title">
                     <div class="mcp-ai-response-title"><t t-esc="message.structuredData.title"/></div>
                 </t>
-                <EchartPreview optionsJson="message.structuredData.options" chartId="message.structuredData.chart_id"/>
+                <EchartPreview t-key="message.structuredData.chart_id || message.structuredData.options" optionsJson="message.structuredData.options" chartId="message.structuredData.chart_id" title="message.structuredData.title"/>
             </t>
             <t t-elif="message.structuredData._type === 'attachment'">
                 <div class="mcp-ai-attachment">
-                    <i t-attf-class="fa {{ message.structuredData.mimetype === 'application/pdf' ? 'fa-file-pdf-o text-danger' : 'fa-file-word-o text-primary' }} fa-2x me-3"/>
-                    <div>
-                        <div class="fw-bold"><t t-esc="message.structuredData.filename"/></div>
-                        <a t-att-href="message.structuredData.url" target="_blank" class="small text-primary">
-                            <t t-if="message.structuredData.mimetype === 'application/pdf'">View PDF</t>
-                            <t t-else="">Download</t>
+                    <i t-att-class="this._attachmentIconClass(message.structuredData.mimetype)"/>
+                    <div class="mcp-ai-attachment-info">
+                        <div class="mcp-ai-attachment-name"><t t-esc="message.structuredData.filename"/></div>
+                        <div class="mcp-ai-attachment-meta">
+                            <t t-esc="this._attachmentTypeLabel(message.structuredData.mimetype)"/>
+                            <t t-if="message.structuredData.size_bytes"> · <t t-esc="this._formatBytes(message.structuredData.size_bytes)"/></t>
+                        </div>
+                    </div>
+                    <div class="mcp-ai-attachment-actions">
+                        <a t-if="message.structuredData.mimetype === 'application/pdf'"
+                           t-att-href="this._attachmentViewUrl(message.structuredData.url)"
+                           target="_blank" class="mcp-ai-attachment-btn mcp-ai-attachment-btn-secondary">
+                            <i class="fa fa-eye me-1"/> View
+                        </a>
+                        <a t-att-href="message.structuredData.url" target="_blank" class="mcp-ai-attachment-btn">
+                            <i class="fa fa-download me-1"/> Download
                         </a>
                     </div>
                 </div>
-                <t t-if="message.structuredData.mimetype === 'application/pdf'">
-                    <iframe t-att-src="message.structuredData.url + '#toolbar=0'"
-                            class="mcp-ai-pdf-preview" title="PDF Preview"/>
-                </t>
             </t>
             <t t-elif="message.structuredData._type === 'cards'">
                 <t t-if="message.structuredData.title">
@@ -824,6 +844,20 @@
     <!-- Live ECharts preview inside a chat bubble — real component (not t-call) so it gets lifecycle hooks -->
     <t t-name="mcp_gateway.EchartPreview">
         <div class="mcp-ai-chart" t-ref="chart"/>
+        <div class="mcp-ai-chart-actions">
+            <a t-if="this.viewUrl" t-att-href="this.viewUrl" target="_blank" class="mcp-ai-attachment-btn mcp-ai-attachment-btn-secondary">
+                <i class="fa fa-expand me-1"/> View
+            </a>
+            <Dropdown>
+                <button class="mcp-ai-attachment-btn">
+                    <i class="fa fa-download me-1"/> Download <i class="fa fa-caret-down ms-1"/>
+                </button>
+                <t t-set-slot="content">
+                    <DropdownItem onSelected="() => this.downloadPng()">PNG</DropdownItem>
+                    <DropdownItem onSelected="() => this.downloadPdf()">PDF</DropdownItem>
+                </t>
+            </Dropdown>
+        </div>
     </t>
 
     <!-- Message Bubble Component -->

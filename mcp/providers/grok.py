@@ -1,6 +1,7 @@
 import logging
 import json
-from .base import AbstractProvider
+import requests
+from .base import AbstractProvider, attach_retry_after
 from odoo import _
 from odoo.exceptions import UserError
 
@@ -11,10 +12,14 @@ _GROK_FALLBACK_MODELS = ['grok-4.3', 'grok-4.20-0309-reasoning', 'grok-4.20-0309
 
 
 class GrokAdapter(AbstractProvider):
-    """Grok (xAI) adapter — OpenAI-compatible API at api.x.ai/v1."""
+    """Grok (xAI) adapter — OpenAI-compatible REST API at api.x.ai/v1, called
+    directly via requests (no vendor SDK needed for an OpenAI-compatible endpoint)."""
 
     def build_headers(self, agent) -> dict:
-        return {'Content-Type': 'application/json'}
+        return {
+            'Authorization': f'Bearer {agent._decrypt_api_key()}',
+            'Content-Type': 'application/json',
+        }
 
     def build_payload(self, messages: list, tool_specs: list, agent) -> dict:
         functions = [
@@ -74,42 +79,47 @@ class GrokAdapter(AbstractProvider):
             raise UserError(_('Failed to parse Grok response: %s') % str(e))
 
     def call(self, agent, messages: list, tool_specs: list) -> dict:
+        headers = self.build_headers(agent)
+        payload = self.build_payload(messages, tool_specs, agent)
+        base_url = agent.api_base_url or _GROK_BASE_URL
+        _logger.info('Calling Grok API with model: %s', payload.get('model'))
+
         try:
-            from openai import OpenAI
+            response = requests.post(f'{base_url}/chat/completions', headers=headers, json=payload, timeout=60)
+        except requests.exceptions.ConnectionError as e:
+            _logger.error('Grok connection error: %s', str(e))
+            raise UserError(_('Failed to connect to Grok API. Check your internet connection.'))
+        except requests.exceptions.Timeout as e:
+            _logger.error('Grok request timed out: %s', str(e))
+            raise UserError(_('Grok API request timed out.'))
 
-            api_key = agent._decrypt_api_key()
-            base_url = agent.api_base_url or _GROK_BASE_URL
-            client = OpenAI(api_key=api_key, base_url=base_url)
+        if response.status_code == 401:
+            raise UserError(_('Invalid Grok API key. Please check your API key at console.x.ai.'))
+        if response.status_code == 429:
+            raise attach_retry_after(UserError(_('Grok rate limit exceeded. Please try again later.')), response)
+        if response.status_code == 400:
+            raise UserError(_('Grok API rejected the request (400). Check your model name — "%s" may not be available on your plan. Try grok-2 or grok-beta.') % agent.model_name)
+        if response.status_code >= 400:
+            try:
+                err_msg = response.json().get('error', {}).get('message', response.text)
+            except ValueError:
+                err_msg = response.text
+            _logger.error('Grok call failed (%s): %s', response.status_code, err_msg)
+            raise UserError(_('Grok API error: %s') % err_msg)
 
-            payload = self.build_payload(messages, tool_specs, agent)
-            _logger.info('Calling Grok API with model: %s', payload.get('model'))
-
-            response = client.chat.completions.create(**payload)
-            resp_dict = response.model_dump() if hasattr(response, 'model_dump') else response
-            return self.parse_response(resp_dict)
-
-        except Exception as e:
-            error_str = str(e)
-            if '401' in error_str or ('authentication' in error_str.lower() and '400' not in error_str):
-                raise UserError(_('Invalid Grok API key. Please check your API key at console.x.ai.'))
-            elif 'rate_limit' in error_str.lower() or '429' in error_str:
-                raise UserError(_('Grok rate limit exceeded. Please try again later.'))
-            elif '400' in error_str:
-                raise UserError(_('Grok API rejected the request (400). Check your model name — "%s" may not be available on your plan. Try grok-2 or grok-beta.') % agent.model_name)
-            else:
-                _logger.error('Grok call failed: %s', error_str)
-                raise UserError(_('Grok API error: %s') % error_str)
+        return self.parse_response(response.json())
 
     def get_available_models(self, agent) -> list:
+        base_url = agent.api_base_url or _GROK_BASE_URL
         try:
-            from openai import OpenAI
-
-            api_key = agent._decrypt_api_key()
-            base_url = agent.api_base_url or _GROK_BASE_URL
-            client = OpenAI(api_key=api_key, base_url=base_url)
-
-            models = client.models.list()
-            grok_models = [m.id for m in models.data if 'grok' in m.id.lower()]
+            response = requests.get(
+                f'{base_url}/models',
+                headers={'Authorization': f'Bearer {agent._decrypt_api_key()}'},
+                timeout=10,
+            )
+            response.raise_for_status()
+            models = response.json().get('data', [])
+            grok_models = [m['id'] for m in models if 'grok' in m.get('id', '').lower()]
             return grok_models if grok_models else _GROK_FALLBACK_MODELS
         except Exception as e:
             _logger.warning('Failed to fetch Grok models: %s', str(e))

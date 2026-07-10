@@ -1,42 +1,73 @@
 """
 mcp_gateway/mcp/providers/gemini.py
 
-Google Gemini API adapter using the NEW google-genai Python SDK.
+Google Gemini API adapter — raw HTTPS via requests, no vendor SDK.
 
 Dependencies:
-  - google-genai package (pip install google-genai)
-  - NOT google-generativeai (deprecated)
+  - requests (already a hard Odoo dependency — no extra pip install needed)
 
 Developer notes:
-  - Client: genai.Client(api_key=...)
-  - Call: client.models.generate_content(model=..., contents=..., config=...)
-  - Tool format: types.Tool(function_declarations=[types.FunctionDeclaration(...)])
-  - Tool results: Content(role='user', parts=[Part(function_response=FunctionResponse(...))])
+  - Talks directly to generativelanguage.googleapis.com's generateContent REST
+    endpoint. Auth via the x-goog-api-key header (no ?key= query param, keeps
+    the key out of server access logs).
+  - Tool format: {"tools": [{"functionDeclarations": [...]}]}
+  - Tool results: {"role": "user", "parts": [{"functionResponse": {...}}]}
+  - The SDK's "automatic function calling" concept (which this project always
+    disabled anyway) doesn't exist at the REST layer — the API never executes
+    functions itself, so there's nothing to disable here.
   - Models: gemini-2.5-flash (free tier), gemini-2.5-pro, gemini-3.5-flash
 """
 
 import logging
 import json
-from .base import AbstractProvider
+import requests
+from .base import AbstractProvider, attach_retry_after
 from odoo import _
 from odoo.exceptions import UserError
 
 _logger = logging.getLogger(__name__)
 
+_GEMINI_BASE_URL = 'https://generativelanguage.googleapis.com/v1beta'
+
 
 class GeminiAdapter(AbstractProvider):
 
     def build_headers(self, agent) -> dict:
-        return {'Content-Type': 'application/json'}
+        return {
+            'x-goog-api-key': agent._decrypt_api_key(),
+            'Content-Type': 'application/json',
+        }
 
     def build_payload(self, messages: list, tool_specs: list, agent) -> dict:
-        # Not used — call() builds directly with SDK types
-        return {}
+        contents = self._build_contents(messages)
 
-    def _build_contents(self, messages: list):
-        """Convert gateway messages to google-genai Contents list."""
-        from google.genai import types
+        system_message = next(
+            (m.get('content', '') for m in messages if m.get('role') == 'system'), ''
+        ) or agent.system_prompt or ''
 
+        payload = {
+            'contents': contents,
+            'generationConfig': {
+                'maxOutputTokens': agent.max_tokens,
+                'temperature': agent.temperature,
+                'topP': agent.top_p,
+            },
+        }
+        if system_message:
+            payload['systemInstruction'] = {'parts': [{'text': system_message}]}
+        if tool_specs:
+            payload['tools'] = [{'functionDeclarations': [
+                {
+                    'name': spec['name'],
+                    'description': spec['description'],
+                    'parameters': spec.get('input_schema', {}),
+                }
+                for spec in tool_specs
+            ]}]
+        return payload
+
+    def _build_contents(self, messages: list) -> list:
+        """Convert gateway messages to Gemini REST API 'contents' list (plain dicts)."""
         contents = []
         for msg in messages:
             role = msg.get('role')
@@ -44,144 +75,105 @@ class GeminiAdapter(AbstractProvider):
                 continue
 
             if role in ('user', 'assistant'):
-                sdk_role = 'user' if role == 'user' else 'model'
+                gemini_role = 'user' if role == 'user' else 'model'
                 content_val = msg.get('content') or ''
 
-                # Assistant message may carry tool_calls
                 tool_calls = msg.get('tool_calls', [])
                 if tool_calls:
                     parts = []
                     if content_val:
-                        parts.append(types.Part(text=content_val))
+                        parts.append({'text': content_val})
                     for tc in tool_calls:
-                        parts.append(types.Part(
-                            function_call=types.FunctionCall(
-                                name=tc['name'],
-                                args=tc.get('arguments', {}),
-                            )
-                        ))
-                    contents.append(types.Content(role=sdk_role, parts=parts))
+                        parts.append({'functionCall': {
+                            'name': tc['name'],
+                            'args': tc.get('arguments', {}),
+                        }})
+                    contents.append({'role': gemini_role, 'parts': parts})
                 else:
-                    contents.append(types.Content(
-                        role=sdk_role,
-                        parts=[types.Part(text=content_val or ' ')],
-                    ))
+                    contents.append({'role': gemini_role, 'parts': [{'text': content_val or ' '}]})
 
             elif role == 'tool':
-                # Tool result — Gemini expects role='user' with function_response
                 tool_name = msg.get('name') or msg.get('tool_call_id', 'tool')
                 result_content = msg.get('content', '')
                 try:
                     result_data = json.loads(result_content) if isinstance(result_content, str) else result_content
                 except Exception:
                     result_data = {'result': result_content}
-                contents.append(types.Content(
-                    role='user',
-                    parts=[types.Part(
-                        function_response=types.FunctionResponse(
-                            name=tool_name,
-                            response=result_data,
-                        )
-                    )]
-                ))
+                contents.append({'role': 'user', 'parts': [{'functionResponse': {
+                    'name': tool_name,
+                    'response': result_data,
+                }}]})
 
         return contents
 
     def call(self, agent, messages: list, tool_specs: list) -> dict:
+        """
+        Make a direct HTTPS call to the Gemini generateContent REST endpoint.
+
+        Args:
+            agent: mcp.agent record
+            messages: Message history
+            tool_specs: Tool specifications
+
+        Returns:
+            dict: Standardized response
+        """
+        headers = self.build_headers(agent)
+        payload = self.build_payload(messages, tool_specs, agent)
+        url = f'{_GEMINI_BASE_URL}/models/{agent.model_name}:generateContent'
+
+        _logger.info('Calling Gemini API with model: %s', agent.model_name)
+
         try:
-            from google import genai
-            from google.genai import types
+            response = requests.post(url, headers=headers, json=payload, timeout=60)
+        except requests.exceptions.ConnectionError as e:
+            _logger.error('Gemini connection error: %s', str(e))
+            raise UserError(_('Failed to connect to Google Gemini API. Check your internet connection.'))
+        except requests.exceptions.Timeout as e:
+            _logger.error('Gemini request timed out: %s', str(e))
+            raise UserError(_('Google Gemini API request timed out.'))
 
-            api_key = agent._decrypt_api_key()
-            client = genai.Client(api_key=api_key)
+        if response.status_code in (401, 403):
+            _logger.error('Gemini authentication failed: %s', response.text)
+            raise UserError(_('Invalid Google API key. Get one at aistudio.google.com'))
+        if response.status_code == 429:
+            _logger.error('Gemini quota exceeded: %s', response.text)
+            raise attach_retry_after(UserError(_('Google Gemini quota exceeded. Try again later or upgrade plan.')), response)
+        if response.status_code >= 400:
+            try:
+                err_msg = response.json().get('error', {}).get('message', response.text)
+            except ValueError:
+                err_msg = response.text
+            _logger.error('Gemini call failed (%s): %s', response.status_code, err_msg)
+            raise UserError(_('Google Gemini API error: %s') % err_msg)
 
-            contents = self._build_contents(messages)
+        return self.parse_response(response.json())
 
-            # System instruction
-            system_message = next(
-                (m.get('content', '') for m in messages if m.get('role') == 'system'), ''
-            ) or agent.system_prompt or ''
-
-            # Tools
-            tools = None
-            if tool_specs:
-                tools = [types.Tool(function_declarations=[
-                    types.FunctionDeclaration(
-                        name=spec['name'],
-                        description=spec['description'],
-                        parameters=spec.get('input_schema', {}),
-                    )
-                    for spec in tool_specs
-                ])]
-
-            config = types.GenerateContentConfig(
-                system_instruction=system_message or None,
-                max_output_tokens=agent.max_tokens,
-                temperature=agent.temperature,
-                top_p=agent.top_p,
-                tools=tools,
-                automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True),
-            )
-
-            _logger.info('Calling Gemini (google-genai) with model: %s', agent.model_name)
-
-            response = client.models.generate_content(
-                model=agent.model_name,
-                contents=contents,
-                config=config,
-            )
-
-            return self.parse_response(response)
-
-        except Exception as e:
-            error_str = str(e)
-            if 'api_key' in error_str.lower() or 'api key' in error_str.lower() or '401' in error_str or 'INVALID_ARGUMENT' in error_str:
-                raise UserError(_('Invalid Google API key. Get one at aistudio.google.com'))
-            elif 'quota' in error_str.lower() or '429' in error_str:
-                raise UserError(_('Google Gemini quota exceeded. Try again later or upgrade plan.'))
-            else:
-                _logger.error('Gemini call failed: %s', error_str)
-                raise UserError(_('Google Gemini API error: %s') % error_str)
-
-    def parse_response(self, response) -> dict:
-        # Overrides AbstractProvider.parse_response — required or GeminiAdapter
-        # remains abstract and can't be instantiated at all (was silently the
-        # case here: `response` is the raw google-genai SDK object, not the
-        # `raw_json: dict` the base class docstring describes, since this
-        # provider calls the SDK directly instead of build_payload+requests).
+    def parse_response(self, raw_json: dict) -> dict:
+        """Parse a raw Gemini generateContent REST JSON response."""
         try:
             text = None
             tool_calls = []
             stop_reason = 'UNKNOWN'
 
-            if response.candidates:
-                candidate = response.candidates[0]
-                stop_reason = candidate.finish_reason.name if hasattr(candidate, 'finish_reason') else 'UNKNOWN'
+            candidates = raw_json.get('candidates', [])
+            if candidates:
+                candidate = candidates[0]
+                stop_reason = candidate.get('finishReason', 'UNKNOWN')
+                for part in candidate.get('content', {}).get('parts', []):
+                    if part.get('text'):
+                        text = part['text']
+                    if part.get('functionCall'):
+                        fc = part['functionCall']
+                        tool_calls.append({
+                            'id': fc.get('name'),
+                            'name': fc.get('name'),
+                            'arguments': fc.get('args') or {},
+                        })
 
-                if candidate.content and candidate.content.parts:
-                    for part in candidate.content.parts:
-                        if hasattr(part, 'text') and part.text:
-                            text = part.text
-                        if hasattr(part, 'function_call') and part.function_call:
-                            fc = part.function_call
-                            tool_calls.append({
-                                'id': fc.name,
-                                'name': fc.name,
-                                'arguments': dict(fc.args) if fc.args else {},
-                            })
-
-            # Also check top-level function_calls shortcut
-            if not tool_calls and hasattr(response, 'function_calls') and response.function_calls:
-                for fc in response.function_calls:
-                    tool_calls.append({
-                        'id': fc.name,
-                        'name': fc.name,
-                        'arguments': dict(fc.args) if fc.args else {},
-                    })
-
-            usage = response.usage_metadata
-            input_tokens = getattr(usage, 'prompt_token_count', 0) if usage else 0
-            output_tokens = getattr(usage, 'candidates_token_count', 0) if usage else 0
+            usage = raw_json.get('usageMetadata', {})
+            input_tokens = usage.get('promptTokenCount', 0)
+            output_tokens = usage.get('candidatesTokenCount', 0)
 
             return {
                 'text': text,
@@ -196,17 +188,18 @@ class GeminiAdapter(AbstractProvider):
 
     def get_available_models(self, agent) -> list:
         try:
-            from google import genai
-
-            api_key = agent._decrypt_api_key()
-            client = genai.Client(api_key=api_key)
-
-            models = client.models.list()
+            response = requests.get(
+                f'{_GEMINI_BASE_URL}/models',
+                headers={'x-goog-api-key': agent._decrypt_api_key()},
+                timeout=10,
+            )
+            response.raise_for_status()
+            models = response.json().get('models', [])
             return [
-                m.name.replace('models/', '')
+                m['name'].replace('models/', '')
                 for m in models
-                if 'gemini' in (m.name or '').lower()
-                and 'preview' not in (m.name or '').lower()
+                if 'gemini' in m.get('name', '').lower()
+                and 'preview' not in m.get('name', '').lower()
             ]
         except Exception as e:
             _logger.warning('Failed to fetch Gemini models: %s', str(e))

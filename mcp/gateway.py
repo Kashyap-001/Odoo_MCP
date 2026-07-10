@@ -25,6 +25,7 @@ Developer notes:
 
 import logging
 import json
+import re
 from datetime import datetime, timedelta
 import pytz
 from odoo import _, fields
@@ -251,6 +252,37 @@ def _sanitize_html_blocks(data):
     return data
 
 
+def _repair_broken_content_json(text):
+    """Best-effort repair for a common LLM mistake: a literal, unescaped quote
+    character left inside a {"_type": "...", "content": "..."} reply's content
+    string (e.g. `when you say "foo", ...` instead of `when you say \\"foo\\", ...`).
+    json.loads() correctly rejects this, and without a repair the raw JSON text
+    is shown to the user verbatim instead of a clean message.
+
+    Only handles this project's own documented single-trailing-"content"-field
+    shape (used by _type: text/error/html) — not a general JSON repairer, and
+    returns None if the text doesn't match that shape so callers can fall back
+    to their existing "show as plain text" behavior.
+    """
+    m = re.match(r'^\s*\{\s*"_type"\s*:\s*"(\w+)"\s*,\s*"content"\s*:\s*"', text)
+    if not m:
+        return None
+    rest = text[m.end():]
+    tail = re.search(r'"\s*\}\s*$', rest)
+    if not tail:
+        return None
+    raw_content = rest[:tail.start()]
+    # Neutralize any quote NOT already preceded by a backslash (the actual bug)
+    # so json.loads can decode legitimate escapes (\n, \\, already-correct \")
+    # without choking on the broken literal ones.
+    neutralized = re.sub(r'(?<!\\)"', '\\"', raw_content)
+    try:
+        content_val = json.loads('"' + neutralized + '"')
+    except (json.JSONDecodeError, ValueError):
+        content_val = raw_content
+    return {'_type': m.group(1), 'content': content_val}
+
+
 def format_tool_specs_for_api(tool_specs, target_format):
     """
     Convert tool specifications to the target API format.
@@ -475,7 +507,7 @@ Choose the _type that best fits your answer:
 
 {"_type": "chart", "chart_id": 10, "title": "Sales by Month"} — use to SHOW/RE-DISPLAY a chart already saved via create_echart (e.g. user says "show me that chart again", "can I see the sales chart"). Get chart_id via read_record/search_read on mcp.echart first. Do NOT include an "options" field — the frontend fetches the chart's current data live from chart_id.
 
-{"_type": "attachment", "url": "/web/content/123", "filename": "invoice.pdf", "mimetype": "application/pdf"}
+{"_type": "attachment", "url": "/web/content/123", "filename": "invoice.pdf", "mimetype": "application/pdf", "size_bytes": 48213}
 
 {"_type": "cards", "title": "Products (5)", "items": [{"title": "Laptop", "subtitle": "$1,200", "image_url": "/web/image/product.template/1/image_1920", "fields": {"Stock": 42, "Code": "LAP-01"}}]}
 
@@ -677,7 +709,10 @@ IMAGE FIELDS: When search_read returns image_1920, image_128, etc., the value is
                 parsed = json.loads(assistant_text)
                 assistant_text = json.dumps(_sanitize_html_blocks(parsed))
             except (json.JSONDecodeError, TypeError):
-                pass
+                repaired = _repair_broken_content_json(assistant_text)
+                if repaired:
+                    _logger.warning('Repaired malformed JSON in assistant reply (unescaped quote in content)')
+                    assistant_text = json.dumps(_sanitize_html_blocks(repaired))
 
         # Log assistant reply
         self.env['mcp.session.message'].create({
@@ -695,8 +730,10 @@ IMAGE FIELDS: When search_read returns image_1920, image_128, etc., the value is
         })
 
         # ── 10. Cost tracking ───────────────────────────────────────
+        # sudo'd: this is a system-computed billing ledger, not a user-facing
+        # write — see mcp_cost_entry_* ACL rows (read-only for user/employee).
         try:
-            self.env['mcp.cost.entry'].create({
+            self.env['mcp.cost.entry'].sudo().create({
                 'session_id': session.id,
                 'input_tokens': input_tokens,
                 'output_tokens': output_tokens,
@@ -1058,6 +1095,9 @@ Quick reference - available local tools:
 
         if any(t.get('name') == 'execute_orm' for t in tool_specs):
             guidance += """
+ORM METHOD GOTCHA — read_group() takes orderby=, not order=:
+env[model].read_group() is the raw ORM method — its sort kwarg is orderby=, e.g. orderby='amount_total desc'. order= only exists on the separate read_group TOOL (which translates it internally); passing order= directly to env[model].read_group() raises "unexpected keyword argument 'order'".
+
 SALE ORDER METHODS — common name confusion:
 - action_quotation_sent(ids)  → sets state='sent' ONLY, does NOT send any email
 - action_quotations_send()    → opens UI wizard, NOT usable programmatically
@@ -1103,6 +1143,7 @@ REPORT/PDF GENERATION — return URL, never render_qweb_pdf:
             guidance += """
 CHART CREATION — create_echart (single call, no separate read_group):
 Use ECharts DATASET format: source = list-of-lists where first row is headers.
+IMPORTANT: env[model].read_group() inside data_code is the RAW ORM method, not the read_group TOOL — it takes orderby=, NOT order= (order= only exists on the separate read_group tool and will raise "unexpected keyword argument 'order'" here).
 Bar/Line:
   result = env['sale.order'].read_group(domain=[['date_order','>=','2026-06-01'],['state','not in',['cancel']]], fields=['amount_total:sum'], groupby=['date_order:day'])
   source = [['Date','Sales']] + [[str(r.get('date_order:day','')), r.get('amount_total',0)] for r in result]
@@ -1123,6 +1164,18 @@ NEVER use xAxis.data or series.data except for Radar/Gauge above — always use 
 TO EDIT AN EXISTING CHART (recolor, restyle, change its data): do NOT call create_echart again — that always creates a duplicate record. Call read_record on mcp.echart with the chart's id to get its current options, modify the JSON, then call update_record on mcp.echart with that id and the new options (or data_code) value.
 """
 
+        if any(t.get('name') == 'generate_export_file' for t in tool_specs):
+            guidance += """
+EXPORT FILE GENERATION — generate_export_file (single call):
+IMPORTANT: env[model].read_group() inside data_code is the RAW ORM method — it takes orderby=, NOT order= (order= only exists on the separate read_group tool).
+data_code must query the ORM and end with: return rows — a plain list of lists, header row first, e.g.:
+  result = env['res.partner'].search_read(domain=[], fields=['name','email'])
+  rows = [['Name','Email']] + [[r['name'], r.get('email') or ''] for r in result]
+  return rows
+Every cell must be a plain str/int/float. Never concatenate an int with a str using + (e.g. count + ' orders' raises TypeError) — use str(count) + ' orders' or an f-string instead.
+NEVER build a workbook/csv writer/PDF inside data_code yourself — the sandbox blocks object attribute assignment entirely (openpyxl's Workbook(), csv.writer(), etc. will always fail there). The tool itself builds the actual file from the rows you return, and the download card is shown automatically — do not call any other tool afterward and do not describe the file yourself.
+"""
+
         return guidance
 
     def _get_external_mcp_tools(self) -> list:
@@ -1141,7 +1194,7 @@ TO EDIT AN EXISTING CHART (recolor, restyle, change its data): do NOT call creat
             for server in servers:
                 if server.server_type == 'http' and server.url:
                     try:
-                        import httpx
+                        import requests
                         headers = {'Content-Type': 'application/json'}
                         auth_credential = server.get_decrypted_auth_value()
                         if server.auth_type == 'bearer' and auth_credential:
@@ -1156,19 +1209,18 @@ TO EDIT AN EXISTING CHART (recolor, restyle, change its data): do NOT call creat
                             'params': {},
                         }
 
-                        with httpx.Client(timeout=10) as client:
-                            resp = client.post(server.url, json=payload, headers=headers)
-                            if resp.status_code == 200:
-                                data = resp.json()
-                                if 'result' in data and 'tools' in data['result']:
-                                    for t in data['result']['tools']:
-                                        tools.append({
-                                            'name': f"ext_{server.name}_{t['name']}",
-                                            'description': f"[{server.name}] {t.get('description', '')}",
-                                            'input_schema': t.get('inputSchema', {}),
-                                            'server_name': server.name,
-                                            'original_name': t['name'],
-                                        })
+                        resp = requests.post(server.url, json=payload, headers=headers, timeout=10)
+                        if resp.status_code == 200:
+                            data = resp.json()
+                            if 'result' in data and 'tools' in data['result']:
+                                for t in data['result']['tools']:
+                                    tools.append({
+                                        'name': f"ext_{server.name}_{t['name']}",
+                                        'description': f"[{server.name}] {t.get('description', '')}",
+                                        'input_schema': t.get('inputSchema', {}),
+                                        'server_name': server.name,
+                                        'original_name': t['name'],
+                                    })
                     except Exception as e:
                         self._logger.warning('Failed to fetch tools from %s: %s', server.name, str(e))
                 elif server.server_type == 'stdio' and server.command:
@@ -1258,6 +1310,8 @@ TO EDIT AN EXISTING CHART (recolor, restyle, change its data): do NOT call creat
         total_output = 0
         last_tool_name = None  # Track the last tool called for error handling
         tool_call_counts = {}  # {(tool_name, args_json): int} — track same-call repetitions
+        total_tool_errors = 0  # bounded error budget — let the model try a different approach
+        MAX_TOOL_ERRORS = 3    # before giving up and surfacing the error to the user
 
         # Determine if we should strip system message (for providers that handle system internally)
         # NOTE: Don't strip system messages - the providers extract system from messages parameter
@@ -1297,9 +1351,15 @@ TO EDIT AN EXISTING CHART (recolor, restyle, change its data): do NOT call creat
                     break
                 except Exception as e:
                     if attempt < max_retries:
-                        self._logger.warning('Provider call failed on attempt %d: %s', attempt + 1, str(e))
+                        # Honor a provider's real Retry-After header (attach_retry_after
+                        # in providers/base.py) when present, instead of always using
+                        # the fixed 2s/4s/6s schedule.
+                        backoff = getattr(e, 'retry_after', None)
+                        if backoff is None:
+                            backoff = 2 * (attempt + 1)
+                        self._logger.warning('Provider call failed on attempt %d: %s (retrying in %ss)', attempt + 1, str(e), backoff)
                         import time
-                        time.sleep(2 * (attempt + 1))
+                        time.sleep(backoff)
                     else:
                         raise
 
@@ -1406,6 +1466,11 @@ TO EDIT AN EXISTING CHART (recolor, restyle, change its data): do NOT call creat
                                 messages_to_send.append(assistant_msg)
                             else:
                                 _logger.warning("Hallucination correction retry also returned no tool calls.")
+                                # The retry call still cost real tokens even though it didn't
+                                # recover — count it, or cost_entry silently under-reports spend.
+                                if retry_resp:
+                                    total_input += retry_resp.get('input_tokens', 0)
+                                    total_output += retry_resp.get('output_tokens', 0)
                                 messages_to_send.pop()  # remove correction, proceed with original
                         except Exception as retry_err:
                             _logger.warning("Hallucination correction retry failed: %s", str(retry_err))
@@ -1481,8 +1546,10 @@ TO EDIT AN EXISTING CHART (recolor, restyle, change its data): do NOT call creat
                 last_tool_name = tool_calls[-1].get('name', 'unknown')
 
             # Execute each tool call and collect results
-            _TERMINAL_TOOLS = frozenset(['create_echart', 'create_record', 'update_record', 'delete_record'])
+            _TERMINAL_TOOLS = frozenset(['create_echart', 'create_record', 'update_record', 'delete_record', 'generate_export_file'])
             _terminal_results = []  # collect (tool_name, parsed_result) for all terminal successes
+            _hard_stop_error = None  # set (not returned) on a fatal error, so later calls in this
+            _hard_stop_tool = None   # SAME batch (e.g. a legitimate create_record) still get to run
 
             for i, tool_call in enumerate(tool_calls):
                 tool_name = tool_call['name']
@@ -1556,36 +1623,54 @@ TO EDIT AN EXISTING CHART (recolor, restyle, change its data): do NOT call creat
                             self._logger.error('Tool execution failed for %s: %s', tool_name, str(e))
                             result = json.dumps({'success': False, 'error': str(e)})
 
-                # Check if tool returned an error - if so, stop the loop and return error to user
-                # Don't let the model retry a failed tool call (causes infinite loop)
+                # Check if tool returned an error. Give the model a bounded budget of
+                # chances to recover (e.g. call list_models after a "model does not
+                # exist" error) instead of hard-stopping on the very first failure —
+                # but never let it retry the identical failing call, and never let
+                # errors accumulate without limit (same anti-infinite-loop shape as
+                # the stuck-same-call detector below).
                 try:
                     result_data = json.loads(result)
-                    if isinstance(result_data, dict) and result_data.get('success') is False:
-                        self._logger.info('Tool %s returned error, stopping loop: %s', tool_name, result_data.get('error'))
-                        # Log tool result before returning
-                        display_content = json.dumps({
-                            '_is_structured': True,
-                            'tool_name': tool_name,
-                            'success': False,
-                            'error': result_data.get('error', 'Unknown error'),
-                        })
-                        self.env['mcp.session.message'].create({
-                            'session_id': session.id if session else None,
-                            'role': 'tool_result',
-                            'content': display_content,
-                            'tool_name': tool_name,
-                            'tool_call_id': tool_call_id,
-                        })
-                        # Return the error as the final response instead of continuing loop
+                except (json.JSONDecodeError, TypeError):
+                    result_data = None
+
+                if isinstance(result_data, dict) and result_data.get('success') is False:
+                    total_tool_errors += 1
+                    _same_call_failed_before = tool_call_counts[_args_key] > 1
+                    self._logger.info(
+                        'Tool %s returned error (error #%d/%d, repeat_call=%s): %s',
+                        tool_name, total_tool_errors, MAX_TOOL_ERRORS, _same_call_failed_before,
+                        result_data.get('error'),
+                    )
+                    display_content = json.dumps({
+                        '_is_structured': True,
+                        'tool_name': tool_name,
+                        'success': False,
+                        'error': result_data.get('error', 'Unknown error'),
+                    })
+                    self.env['mcp.session.message'].create({
+                        'session_id': session.id if session else None,
+                        'role': 'tool_result',
+                        'content': display_content,
+                        'tool_name': tool_name,
+                        'tool_call_id': tool_call_id,
+                    })
+
+                    if _same_call_failed_before or total_tool_errors > MAX_TOOL_ERRORS:
+                        # Identical call failed twice, or the error budget is exhausted — give up
+                        # on THIS tool, but don't return immediately: a later call in this same
+                        # batch may be an unrelated, legitimate terminal write (e.g. get_model_schema
+                        # fails, create_record right after it should still execute) — finish the
+                        # batch first, then decide what to surface after the loop.
                         _err = result_data.get('error', 'Unknown error')
                         _extra = result_data.get('message', '')
-                        error_msg = f"{_err} {_extra}".strip() if _extra else _err
-                        return {
-                            'text': json.dumps({'_type': 'error', 'content': error_msg.strip()}),
-                            'tool_calls': [],
-                        }, [], total_tool_calls, total_input, total_output, tool_name
-                except (json.JSONDecodeError, TypeError):
-                    pass  # Not JSON, continue normal flow
+                        _hard_stop_error = f"{_err} {_extra}".strip() if _extra else _err
+                        _hard_stop_tool = tool_name
+                        continue
+
+                    # Let the model see the error and try a different approach next turn.
+                    self._append_tool_result(provider, messages_to_send, tool_call_id, tool_name, result, message_format)
+                    continue
 
                 # Log tool result — convert to structured JSON for frontend card rendering
                 try:
@@ -1626,8 +1711,16 @@ TO EDIT AN EXISTING CHART (recolor, restyle, change its data): do NOT call creat
                     'tool_calls': [],
                 }, [], total_tool_calls, total_input, total_output, _terminal_results[-1][0]
 
+            # A fatal error occurred somewhere in the batch, and nothing terminal succeeded
+            # alongside it (if something HAD succeeded, the block above already returned it).
+            if _hard_stop_error is not None:
+                return {
+                    'text': json.dumps({'_type': 'error', 'content': _hard_stop_error.strip()}),
+                    'tool_calls': [],
+                }, [], total_tool_calls, total_input, total_output, _hard_stop_tool
+
             # Detect stuck-on-same-tool: if any non-terminal tool called 3+ times, force synthesis
-            _TERMINAL_TOOLS_SET = frozenset(['create_echart', 'create_record', 'update_record', 'delete_record'])
+            _TERMINAL_TOOLS_SET = frozenset(['create_echart', 'create_record', 'update_record', 'delete_record', 'generate_export_file'])
             MAX_SAME_TOOL_CALLS = 3
             _force_exit = False
             for (_stuck_tool, _stuck_args_json), _stuck_count in tool_call_counts.items():
@@ -1841,6 +1934,15 @@ TO EDIT AN EXISTING CHART (recolor, restyle, change its data): do NOT call creat
                 'title': f"Updated in {self._model_label(model)}",
                 'subtitle': f"{len(res_ids)} record(s)",
                 'data': {'IDs': ', '.join(str(i) for i in res_ids)} if res_ids else {},
+            }
+
+        if tool_name == 'generate_export_file':
+            return {
+                '_type': 'attachment',
+                'url': res.get('url'),
+                'filename': res.get('filename'),
+                'mimetype': res.get('mimetype'),
+                'size_bytes': res.get('size_bytes'),
             }
 
         if tool_name == 'delete_record':
@@ -2203,7 +2305,7 @@ TO EDIT AN EXISTING CHART (recolor, restyle, change its data): do NOT call creat
             str: JSON result string
         """
         try:
-            import httpx
+            import requests
 
             server = self.env['mcp.external.server'].search([
                 ('name', '=', server_name),
@@ -2233,23 +2335,22 @@ TO EDIT AN EXISTING CHART (recolor, restyle, change its data): do NOT call creat
                 },
             }
 
-            with httpx.Client(timeout=30) as client:
-                resp = client.post(server.url, json=payload, headers=headers)
-                resp.raise_for_status()
-                data = resp.json()
+            resp = requests.post(server.url, json=payload, headers=headers, timeout=30)
+            resp.raise_for_status()
+            data = resp.json()
 
-                if 'error' in data:
-                    return json.dumps({'success': False, 'error': data['error'].get('message', 'Unknown error')})
+            if 'error' in data:
+                return json.dumps({'success': False, 'error': data['error'].get('message', 'Unknown error')})
 
-                if 'result' in data:
-                    result_data = data['result']
-                    if result_data.get('isError'):
-                        return json.dumps({'success': False, 'error': result_data['content'][0]['text']})
-                    return json.dumps({'success': True, 'result': result_data['content'][0]['text']})
+            if 'result' in data:
+                result_data = data['result']
+                if result_data.get('isError'):
+                    return json.dumps({'success': False, 'error': result_data['content'][0]['text']})
+                return json.dumps({'success': True, 'result': result_data['content'][0]['text']})
 
-                return json.dumps({'success': False, 'error': 'Unexpected response format'})
+            return json.dumps({'success': False, 'error': 'Unexpected response format'})
 
-        except httpx.TimeoutException:
+        except requests.exceptions.Timeout:
             return json.dumps({'success': False, 'error': 'External MCP server timed out'})
         except Exception as e:
             self._logger.error('External MCP tool call failed: %s', str(e))

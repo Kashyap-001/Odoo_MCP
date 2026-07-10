@@ -1,29 +1,33 @@
 """
 mcp_gateway/mcp/providers/openai.py
 
-OpenAI GPT API adapter using official openai Python SDK.
+OpenAI GPT API adapter — raw HTTPS via requests, no vendor SDK.
 
 Key classes:
   OpenAIAdapter — Adapter for OpenAI's GPT-4, GPT-4 Turbo, GPT-4o models
 
 Dependencies:
-  - openai package (pip install openai)
+  - requests (already a hard Odoo dependency — no extra pip install needed)
   - base.AbstractProvider
 
 Developer notes:
-  - Uses official OpenAI SDK for reliable API calls
-  - SDK handles authentication and error handling
+  - Talks directly to the Chat Completions API; build_payload() already returns
+    the exact JSON body this REST endpoint expects
   - Tool format: OpenAI tools array with function objects
   - Models: gpt-4, gpt-4-turbo, gpt-4o
 """
 
 import logging
 import json
-from .base import AbstractProvider
+import requests
+from .base import AbstractProvider, attach_retry_after
 from odoo import _
 from odoo.exceptions import UserError
 
 _logger = logging.getLogger(__name__)
+
+_OPENAI_CHAT_URL = 'https://api.openai.com/v1/chat/completions'
+_OPENAI_MODELS_URL = 'https://api.openai.com/v1/models'
 
 
 class OpenAIAdapter(AbstractProvider):
@@ -41,15 +45,16 @@ class OpenAIAdapter(AbstractProvider):
 
     def build_headers(self, agent) -> dict:
         """
-        Build headers - not needed with SDK as it handles auth internally.
+        Build headers for a direct OpenAI Chat Completions API call.
 
         Args:
-            agent: mcp.agent record
+            agent: mcp.agent record (with decrypted api_key)
 
         Returns:
-            dict: Minimal headers
+            dict: HTTP headers including Bearer auth
         """
         return {
+            'Authorization': f'Bearer {agent._decrypt_api_key()}',
             'Content-Type': 'application/json',
         }
 
@@ -187,7 +192,7 @@ class OpenAIAdapter(AbstractProvider):
 
     def call(self, agent, messages: list, tool_specs: list) -> dict:
         """
-        Make an API call using OpenAI SDK.
+        Make a direct HTTPS call to the OpenAI Chat Completions API.
 
         Args:
             agent: mcp.agent record
@@ -197,54 +202,55 @@ class OpenAIAdapter(AbstractProvider):
         Returns:
             dict: Standardized response
         """
+        headers = self.build_headers(agent)
+        payload = self.build_payload(messages, tool_specs, agent)
+
+        _logger.info('Calling OpenAI API with model: %s', payload.get('model'))
+
         try:
-            from openai import OpenAI
+            response = requests.post(_OPENAI_CHAT_URL, headers=headers, json=payload, timeout=60)
+        except requests.exceptions.ConnectionError as e:
+            _logger.error('OpenAI connection error: %s', str(e))
+            raise UserError(_('Failed to connect to OpenAI API. Check your internet connection.'))
+        except requests.exceptions.Timeout as e:
+            _logger.error('OpenAI request timed out: %s', str(e))
+            raise UserError(_('OpenAI API request timed out.'))
 
-            api_key = agent._decrypt_api_key()
-            client = OpenAI(api_key=api_key)
+        if response.status_code == 401:
+            _logger.error('OpenAI authentication failed: %s', response.text)
+            raise UserError(_('Invalid OpenAI API key. Please check your API key.'))
+        if response.status_code == 429:
+            _logger.error('OpenAI rate limit exceeded: %s', response.text)
+            raise attach_retry_after(UserError(_('OpenAI rate limit exceeded. Please try again later.')), response)
+        if response.status_code >= 400:
+            try:
+                err_msg = response.json().get('error', {}).get('message', response.text)
+            except ValueError:
+                err_msg = response.text
+            _logger.error('OpenAI call failed (%s): %s', response.status_code, err_msg)
+            raise UserError(_('OpenAI API error: %s') % err_msg)
 
-            payload = self.build_payload(messages, tool_specs, agent)
-
-            _logger.info('Calling OpenAI SDK with model: %s', payload.get('model'))
-
-            response = client.chat.completions.create(**payload)
-
-            # model_dump() works since response is SDK object; fallback for dict
-            resp_dict = response.model_dump() if hasattr(response, 'model_dump') else response
-            return self.parse_response(resp_dict)
-
-        except Exception as e:
-            error_str = str(e)
-            if 'authentication' in error_str.lower() or 'api key' in error_str.lower():
-                _logger.error('OpenAI authentication failed: %s', error_str)
-                raise UserError(_('Invalid OpenAI API key. Please check your API key.'))
-            elif 'rate_limit' in error_str.lower():
-                _logger.error('OpenAI rate limit exceeded: %s', error_str)
-                raise UserError(_('OpenAI rate limit exceeded. Please try again later.'))
-            else:
-                _logger.error('OpenAI call failed: %s', error_str)
-                raise UserError(_('OpenAI API error: %s') % error_str)
+        return self.parse_response(response.json())
 
     def get_available_models(self, agent) -> list:
         """
-        Fetch available GPT models from OpenAI.
-
-        Uses SDK to list models.
+        Fetch available GPT models from OpenAI via a direct HTTPS call.
 
         Args:
-            agent: mcp.agent record (for consistency)
+            agent: mcp.agent record (for auth)
 
         Returns:
             list: Available model IDs
         """
         try:
-            from openai import OpenAI
-
-            api_key = agent._decrypt_api_key()
-            client = OpenAI(api_key=api_key)
-
-            models = client.models.list()
-            return [m.id for m in models.data if 'gpt' in m.id.lower()]
+            response = requests.get(
+                _OPENAI_MODELS_URL,
+                headers={'Authorization': f'Bearer {agent._decrypt_api_key()}'},
+                timeout=10,
+            )
+            response.raise_for_status()
+            models = response.json().get('data', [])
+            return [m['id'] for m in models if 'gpt' in m.get('id', '').lower()]
         except Exception as e:
             _logger.warning('Failed to fetch OpenAI models: %s', str(e))
             # Source: developers.openai.com/api/docs/models (2026-07-01)

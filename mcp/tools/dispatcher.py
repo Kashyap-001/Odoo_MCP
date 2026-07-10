@@ -20,10 +20,12 @@ import hashlib
 import hmac
 import math
 import itertools
+from html import escape as _html_escape
 import datetime as dt_module
 from datetime import datetime, date, timedelta
 from collections import defaultdict, Counter
 import threading
+from lxml import etree
 
 from odoo.fields import Command
 from odoo import exceptions
@@ -55,10 +57,10 @@ _safe_io = wrap_module(_io, ['BytesIO', 'StringIO'])
 _safe_xlrd = wrap_module(_xlrd, ['open_workbook', 'xldate_as_datetime'])
 _safe_openpyxl = wrap_module(_openpyxl, ['load_workbook'])
 
-# pantalytics: avatar_* auto-redirect to image_1920
+# Any avatar_* size field auto-redirects to image_1920 (the one field Odoo actually stores)
 _AVATAR_FIELD_RE = re.compile(r'^avatar_(128|256|512|1024|1920)$')
 
-# tuanle96: model rename history dict (copied from tools_diagnostics.py)
+# Old model names renamed across Odoo versions — remapped so a stale/guessed name still resolves
 _MODEL_HISTORY = {
     'account.invoice': 'account.move',
     'account.invoice.line': 'account.move.line',
@@ -71,7 +73,7 @@ _MODEL_HISTORY = {
     'sale.order.line': 'sale.order.line',
 }
 
-_BULK_MAX = 1000  # pantalytics cap for bulk operations
+_BULK_MAX = 1000  # flat cap for bulk create/update/delete operations
 
 
 def _make_serializable(obj):
@@ -126,6 +128,28 @@ def _safe_exec(code: str, context: dict, fn_name: str = '_exec_fn'):
     return context[fn_name]()
 
 
+def _render_via_odoo_report_layout(env, content_html, landscape=False):
+    """Wrap ad-hoc HTML in Odoo's own configured report chrome (company logo,
+    address, footer, page numbers — Settings > Companies > Document Layout)
+    and return PDF bytes. Reuses `web.preview_externalreport`'s doc-less
+    pattern (the same template behind the "Preview External Report" button)
+    — no ir.actions.report record or QWeb view file needed for this: company/
+    res_company are auto-defaulted by _render_template, and _prepare_html
+    works fine on a bare `ir.actions.report` recordset with no real report."""
+    Report = env['ir.actions.report']
+    tmpl = etree.fromstring(f'''<t t-call="web.html_container">
+        <t t-call="web.external_layout">
+            <div class="page">{content_html}</div>
+        </t>
+    </t>''')
+    full_html = Report._render_template(tmpl, {'report_type': 'pdf'})
+    bodies, _res_ids, header, footer, paperformat_args = Report._prepare_html(full_html)
+    return Report._run_wkhtmltopdf(
+        bodies, header=header, footer=footer,
+        specific_paperformat_args=paperformat_args, landscape=landscape,
+    )
+
+
 def _assert_public_url(url):
     """Reject URLs that resolve to internal/loopback/link-local addresses (SSRF guard).
 
@@ -147,6 +171,90 @@ def _assert_public_url(url):
         ip = ipaddress.ip_address(sockaddr[0])
         if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved or ip.is_multicast or ip.is_unspecified:
             raise ValueError(f'URL host {parsed.hostname!r} resolves to a non-public address ({ip}) — refusing to fetch')
+
+
+_BLOCKED_RECORDSET_METHODS = frozenset({
+    'write', 'unlink', 'create', 'copy', 'sudo', 'su', 'with_user', 'with_context',
+    'toggle_active', 'action_archive', 'action_unarchive', 'message_post', 'message_post_with_source',
+})
+_BLOCKED_ENV_ATTRS = frozenset({'cr', 'registry', 'sudo', 'su'})
+
+
+def _wrap_readonly(value):
+    """If `value` is an Odoo recordset (has the shape of one), wrap it so any
+    mutating call raises instead of executing for real. Plain values (str,
+    int, list of dicts from read_group, etc.) pass through untouched."""
+    if hasattr(value, '_name') and hasattr(value, 'browse'):
+        return _ReadOnlyRecordset(value)
+    return value
+
+
+class _ReadOnlyRecordset:
+    """Read-only view of an Odoo recordset for AI-authored `data_code` in
+    create_echart/generate_export_file. safe_eval's opcode blacklist stops
+    imports and attribute-assignment but NOT ordinary method calls, so
+    `env['x'].search([]).unlink()` would otherwise execute for real from
+    inside a tool that's only supposed to compute chart/export data.
+
+    ponytail: no __add__/__eq__/__and__ — recordset concatenation/equality
+    isn't used by existing chart/export data_code; add if a real case needs it.
+    """
+    __slots__ = ('_rs',)
+
+    def __init__(self, rs):
+        self._rs = rs
+
+    def __getattr__(self, name):
+        if name in _BLOCKED_RECORDSET_METHODS:
+            raise AttributeError(
+                f"'{name}' is blocked here — this tool can only read data, not write it. "
+                f"Use execute_orm if a real write is actually needed."
+            )
+        value = getattr(self._rs, name)
+        if not callable(value):
+            return _wrap_readonly(value)
+        def _wrapped(*args, **kwargs):
+            return _wrap_readonly(value(*args, **kwargs))
+        return _wrapped
+
+    def __iter__(self):
+        return (_wrap_readonly(r) for r in self._rs)
+
+    def __len__(self):
+        return len(self._rs)
+
+    def __bool__(self):
+        return bool(self._rs)
+
+    def __getitem__(self, key):
+        return _wrap_readonly(self._rs[key])
+
+    def __repr__(self):
+        return repr(self._rs)
+
+
+class _ReadOnlyEnv:
+    """Read-only view of an Odoo Environment — see _ReadOnlyRecordset."""
+    __slots__ = ('_env',)
+
+    def __init__(self, env):
+        self._env = env
+
+    def __getitem__(self, model_name):
+        return _ReadOnlyRecordset(self._env[model_name])
+
+    def __getattr__(self, name):
+        if name in _BLOCKED_ENV_ATTRS:
+            raise AttributeError(
+                f"'{name}' is blocked here — direct cursor/registry/sudo access "
+                f"would bypass the read-only guard entirely."
+            )
+        value = getattr(self._env, name)
+        if not callable(value):
+            return _wrap_readonly(value)
+        def _wrapped(*args, **kwargs):
+            return _wrap_readonly(value(*args, **kwargs))
+        return _wrapped
 
 
 def _normalize_domain(domain):
@@ -173,6 +281,27 @@ def _check_domain_fields(model, domain):
                 f"used in a search domain. Use read_group on the model that stores this data instead "
                 f"(e.g. group sale.order by partner_id rather than filtering res.partner.sale_order_count)."
             )
+
+
+def _check_order_fields(model, order):
+    # Odoo search/read fails with a database-level SQL conversion traceback if
+    # the order clause references a non-stored computed field. Fail loud instead.
+    if not order or not isinstance(order, str):
+        return
+    for part in order.split(','):
+        part = part.strip()
+        if not part:
+            continue
+        fname = part.split()[0]
+        if '.' in fname:
+            continue  # skip related/dotted paths
+        field = model._fields.get(fname)
+        if field is not None and not field.store:
+            raise ValueError(
+                f"Field '{fname}' on {model._name} is a non-stored computed field and cannot be "
+                f"used in an order clause. Sort the results in Python after reading or sort by a stored field instead."
+            )
+
 
 
 class ToolDispatcher:
@@ -264,6 +393,8 @@ class ToolDispatcher:
                 result = self._dispatch_import_from_file(arguments, env, user)
             elif name == 'create_echart':
                 result = self._dispatch_create_echart(arguments, env, user)
+            elif name == 'generate_export_file':
+                result = self._dispatch_generate_export_file(arguments, env, user)
             elif name == 'ai_agent_query':
                 result = self._dispatch_ai_agent_query(arguments, env, user)
             else:
@@ -326,6 +457,7 @@ class ToolDispatcher:
 
         model = env[model_name].with_user(user)
         _check_domain_fields(model, domain)
+        _check_order_fields(model, order)
         records = model.search_read(domain, fields, limit=limit, order=order)
         # Detect binary fields so we can swap bytes→URL instead of bytes→None
         binary_fields = {f for f in fields if f in model._fields and model._fields[f].type == 'binary'} if fields else set()
@@ -462,7 +594,7 @@ class ToolDispatcher:
         })
         return {'id': att.id, 'name': att.name, 'model': arguments['model'], 'record_id': int(arguments['record_id'])}
 
-    _MAX_ATTACHMENT_BYTES = 1 * 1024 * 1024  # 1 MiB — same cap as tuanle96/mcp-odoo
+    _MAX_ATTACHMENT_BYTES = 1 * 1024 * 1024  # 1 MiB cap — keeps large binary data out of the LLM context
 
     def _dispatch_read_attachment(self, arguments, env, user):
         att_id = int(arguments['attachment_id'])
@@ -498,13 +630,13 @@ class ToolDispatcher:
         }
 
     def _dispatch_set_binary_field(self, arguments, env, user):
-        """pantalytics pattern: fetch from URL, write to binary/image field. Bytes never pass through LLM."""
+        """Fetch bytes from a URL and write them to a binary/image field. The bytes
+        never pass through the LLM — only the source URL and target field do."""
         model = arguments['model']
         record_id = int(arguments['record_id'])
         field_name = arguments['field_name']
         source_url = arguments['source']
 
-        # pantalytics: auto-redirect avatar_* to image_1920
         if _AVATAR_FIELD_RE.match(field_name):
             field_name = 'image_1920'
 
@@ -518,7 +650,7 @@ class ToolDispatcher:
 
         _assert_public_url(source_url)
 
-        # pantalytics: 25MB cap, 64KB chunks
+        # 25MB cap, streamed in 64KB chunks
         _MAX_BINARY = 25 * 1024 * 1024
         chunks = []
         total = 0
@@ -538,7 +670,7 @@ class ToolDispatcher:
         return {'model': model, 'record_id': record_id, 'field': field_name, 'size_bytes': total}
 
     def _dispatch_create_records(self, arguments, env, user):
-        """pantalytics bulk create — multiple records in one call."""
+        """Bulk create — multiple records in one call."""
         model_name = arguments['model']
         vals_list = arguments['vals_list']
         match_field = arguments.get('match_field')
@@ -576,7 +708,7 @@ class ToolDispatcher:
         return {'model': model_name, 'ids': records.ids, 'count': len(records)}
 
     def _dispatch_update_records(self, arguments, env, user):
-        """pantalytics bulk update — same values written to multiple records."""
+        """Bulk update — the same values written to multiple records."""
         model_name = arguments['model']
         record_ids = arguments['record_ids']
         values = arguments['values']
@@ -589,7 +721,7 @@ class ToolDispatcher:
         return {'model': model_name, 'record_ids': record_ids, 'count': len(record_ids)}
 
     def _dispatch_delete_records(self, arguments, env, user):
-        """pantalytics bulk delete — multiple records unlinked in one call."""
+        """Bulk delete — multiple records unlinked in one call."""
         model = arguments['model']
         record_ids = arguments['record_ids']
         if len(record_ids) > _BULK_MAX:
@@ -598,7 +730,7 @@ class ToolDispatcher:
         return {'model': model, 'count': len(record_ids)}
 
     def _dispatch_lookup_model_history(self, arguments, env, user):
-        """tuanle96 pattern: resolve outdated model names to current Odoo names."""
+        """Resolve outdated/renamed model names to their current Odoo equivalent."""
         model = arguments['model']
         if model in _MODEL_HISTORY:
             current = _MODEL_HISTORY[model]
@@ -618,7 +750,7 @@ class ToolDispatcher:
         }
 
     def _dispatch_accounting_health_summary(self, arguments, env, user):
-        """tuanle96 pattern: quick AR/AP health check without multiple tool calls."""
+        """Quick accounts-receivable/payable health check without multiple tool calls."""
         Move = env['account.move'].with_user(user)
         today = date.today()  # compared against raw `date` values from search_read below — must stay a date, not a string
         ar = Move.search_read(
@@ -826,9 +958,11 @@ class ToolDispatcher:
         options = arguments.get('options', {})
 
         if data_code:
+            # env/user are wrapped read-only — data_code only ever needs to return
+            # rows for the chart, never mutate records (see _ReadOnlyRecordset).
             fn_globals = {
-                'env': env,
-                'user': user,
+                'env': _ReadOnlyEnv(env),
+                'user': _wrap_readonly(user),
                 'datetime': datetime,
                 'date': date,
                 'timedelta': timedelta,
@@ -838,7 +972,12 @@ class ToolDispatcher:
                 're': _safe_re,
                 'math': _safe_math,
             }
-            options = _safe_exec(data_code.strip(), fn_globals, '_chart_fn')
+            # Strip ALL import lines — every needed module is pre-loaded in fn_globals above
+            stripped_code = '\n'.join(
+                line for line in data_code.strip().splitlines()
+                if not line.strip().startswith(('import ', 'from '))
+            )
+            options = _safe_exec(stripped_code, fn_globals, '_chart_fn')
 
         chart = env['mcp.echart'].with_user(user).create({
             'name': name,
@@ -846,6 +985,96 @@ class ToolDispatcher:
             'options': json.dumps(options) if isinstance(options, dict) else (options or '{}'),
         })
         return {'id': chart.id, 'name': name}
+
+    _MAX_EXPORT_ROWS = 10000  # ponytail: flat cap, raise if a real use case needs more
+
+    def _dispatch_generate_export_file(self, arguments, env, user):
+        """AI supplies data_code that returns rows (list of lists, header row first) —
+        the sandbox never touches a file-writing library directly (safe_eval blocks
+        STORE_ATTR entirely, so `ws.title = ...` always fails; and execute_orm's
+        openpyxl binding is read-only). This method builds the actual file itself,
+        outside the sandbox, from the AI-returned data only."""
+        export_format = arguments['format']
+        if export_format not in ('csv', 'xlsx', 'pdf'):
+            raise ValueError(f"Unsupported format: {export_format!r} — use csv, xlsx, or pdf")
+        title = arguments.get('title') or 'Export'
+        data_code = arguments['data_code']
+
+        # env/user are wrapped read-only — same reasoning as create_echart above.
+        fn_globals = {
+            'env': _ReadOnlyEnv(env),
+            'user': _wrap_readonly(user),
+            'datetime': datetime,
+            'date': date,
+            'timedelta': timedelta,
+            'defaultdict': defaultdict,
+            'Counter': Counter,
+            'json': _safe_json,
+            're': _safe_re,
+            'math': _safe_math,
+        }
+        stripped_code = '\n'.join(
+            line for line in data_code.strip().splitlines()
+            if not line.strip().startswith(('import ', 'from '))
+        )
+        rows = _safe_exec(stripped_code, fn_globals, '_export_fn')
+
+        if not isinstance(rows, list) or not rows or not all(isinstance(r, (list, tuple)) for r in rows):
+            raise ValueError('data_code must return a non-empty list of rows (each row a list) — header row first')
+        if len(rows) > self._MAX_EXPORT_ROWS:
+            raise ValueError(f'{len(rows)} rows exceeds the {self._MAX_EXPORT_ROWS}-row export cap')
+
+        filename = arguments.get('filename') or re.sub(r'[^A-Za-z0-9_-]+', '_', title).strip('_') or 'export'
+
+        if export_format == 'csv':
+            import csv
+            buf = _io.StringIO()
+            csv.writer(buf).writerows(rows)
+            file_bytes = buf.getvalue().encode('utf-8')
+            mimetype = 'text/csv'
+            filename += '.csv'
+        elif export_format == 'xlsx':
+            wb = _openpyxl.Workbook()
+            ws = wb.active
+            for row in rows:
+                ws.append(list(row))
+            buf = _io.BytesIO()
+            wb.save(buf)
+            file_bytes = buf.getvalue()
+            mimetype = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+            filename += '.xlsx'
+        else:  # pdf
+            header_cells = ''.join(f'<th>{_html_escape(str(c))}</th>' for c in rows[0])
+            body_rows = ''.join(
+                '<tr>' + ''.join(f'<td>{_html_escape(str(c))}</td>' for c in row) + '</tr>'
+                for row in rows[1:]
+            )
+            row_count = len(rows) - 1
+            generated_at = datetime.now().strftime('%B %d, %Y at %H:%M')
+            content_html = f'''
+                <h2>{_html_escape(title)}</h2>
+                <p class="text-muted">Generated {generated_at} · {row_count} row(s)</p>
+                <table class="table table-sm table-bordered table-striped">
+                    <thead><tr>{header_cells}</tr></thead>
+                    <tbody>{body_rows}</tbody>
+                </table>
+            '''
+            file_bytes = _render_via_odoo_report_layout(env, content_html)
+            mimetype = 'application/pdf'
+            filename += '.pdf'
+
+        att = env['ir.attachment'].with_user(user).create({
+            'name': filename,
+            'datas': base64.b64encode(file_bytes).decode('ascii'),
+            'mimetype': mimetype,
+        })
+        return {
+            'id': att.id,
+            'url': f'/web/content/{att.id}?download=true',
+            'filename': filename,
+            'mimetype': mimetype,
+            'size_bytes': len(file_bytes),
+        }
 
     def _dispatch_ai_agent_query(self, arguments, env, user):
         agent_id = arguments['agent_id']

@@ -11,6 +11,7 @@ Routes:
   GET    /mcp/agents/available
   GET    /mcp/tools/available
   GET    /mcp/session/<id>/transcript
+  GET    /mcp/echart/<id>/view
   POST   /mcp/webhook/<token>
 
 Dependencies:
@@ -20,6 +21,7 @@ Dependencies:
 """
 
 import logging
+from markupsafe import escape
 from odoo import http
 from odoo.exceptions import AccessError, UserError
 from ..mcp.gateway import McpGateway
@@ -296,6 +298,73 @@ class ChatController(http.Controller):
         except Exception as e:
             _logger.error('Error exporting transcript: %s', str(e))
             return http.request.not_found()
+
+    @http.route('/mcp/echart/<int:echart_id>/view', type='http', auth='user')
+    def echart_view(self, echart_id: int, **kwargs):
+        """
+        Full-size, authenticated chart view for the "View" button in chat.
+
+        No token/sudo — relies entirely on the same ir.rule (own-or-shared,
+        manager/admin see all) that already governs mcp.echart everywhere else.
+        Reading `.options`/`.name` below triggers Odoo's normal access check;
+        a chart outside the user's visibility raises AccessError, caught below
+        as a plain 404 (matches the public share page's not-found behavior,
+        doesn't leak whether the id exists at all).
+
+        Args:
+            echart_id (int): Chart ID to display
+
+        Returns:
+            Response: Full-page HTML rendering the chart
+        """
+        try:
+            echart = http.request.env['mcp.echart'].browse(echart_id)
+            if not echart.exists():
+                return http.request.not_found()
+
+            title = escape(echart.name or 'Chart')
+            options_json = (echart.options or '{}').replace('</script>', '<\\/script>')
+        except AccessError:
+            return http.request.not_found()
+
+        echarts_url = '/mcp_gateway/static/lib/echarts.min.js'
+
+        html = f'''<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>{title}</title>
+<style>
+  * {{ margin: 0; padding: 0; box-sizing: border-box; }}
+  body {{ background: #1a1a2e; color: #eee; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }}
+  .header {{ background: #16213e; padding: 12px 20px; border-bottom: 1px solid #0f3460; }}
+  .header h1 {{ font-size: 16px; font-weight: 600; color: #e94560; }}
+  #chart {{ width: 100%; height: calc(100vh - 45px); }}
+  .error {{ padding: 24px; color: #e94560; font-family: monospace; white-space: pre-wrap; }}
+</style>
+</head>
+<body>
+<div class="header"><h1>{title}</h1></div>
+<div id="chart"></div>
+<script src="{echarts_url}"></script>
+<script>
+(function() {{
+  var options = {options_json};
+  var el = document.getElementById('chart');
+  var chart = echarts.init(el, null, {{ renderer: 'canvas' }});
+  window.addEventListener('resize', function() {{ chart.resize(); }});
+  try {{
+    chart.setOption(options, true);
+  }} catch(e) {{
+    el.innerHTML = '<div class="error">ECharts setOption error: ' + e.message + '</div>';
+  }}
+}})();
+</script>
+</body>
+</html>'''
+
+        return http.request.make_response(html, [('Content-Type', 'text/html; charset=utf-8')])
 
     @http.route('/mcp/webhook/<string:token>', type='json', auth='none', methods=['POST'])
     def webhook_trigger(self, token: str, **kwargs) -> dict:

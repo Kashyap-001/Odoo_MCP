@@ -595,7 +595,7 @@ class Agent(models.Model):
             - Safe to call multiple times (returns same key)
         """
         param_key = 'mcp_gateway.fernet_key'
-        stored_key = self.env['ir.config_parameter'].get_param(param_key)
+        stored_key = self.env['ir.config_parameter'].sudo().get_param(param_key)
 
         if stored_key:
             try:
@@ -606,7 +606,7 @@ class Agent(models.Model):
 
         # Auto-generate new key
         new_key = Fernet.generate_key()
-        self.env['ir.config_parameter'].set_param(param_key, b64encode(new_key).decode())
+        self.env['ir.config_parameter'].sudo().set_param(param_key, b64encode(new_key).decode())
         _logger.info('Generated new Fernet key for API key encryption')
         return new_key
 
@@ -690,20 +690,21 @@ class Agent(models.Model):
             - Result should never be stored, logged, or transmitted
             - If Fernet key is lost, all stored API keys become unrecoverable
         """
-        if not self.api_key:
+        api_key = self.sudo().api_key
+        if not api_key:
             _logger.warning('No API key set for agent %s', getattr(self, 'id', 'New'))
             return ''
 
         # If it doesn't start with the Fernet magic string, it's likely a plaintext
         # key from an onchange event in the UI before it has been saved/encrypted.
-        if not self.api_key.startswith('gAAAAAB'):
+        if not api_key.startswith('gAAAAAB'):
             _logger.info('API key does not appear to be encrypted. Assuming plaintext (e.g. from onchange).')
-            return self.api_key
+            return api_key
 
         try:
             key = self._get_fernet_key()
             cipher_suite = Fernet(key)
-            plaintext = cipher_suite.decrypt(self.api_key.encode())
+            plaintext = cipher_suite.decrypt(api_key.encode())
             decrypted = plaintext.decode()
             _logger.info('API key decrypted successfully for agent %s', getattr(self, 'id', 'New'))
             return decrypted
@@ -823,7 +824,7 @@ class Agent(models.Model):
             if agent.provider == 'ollama':
                 # Ollama doesn't need API key
                 agent.status = 'online'
-            elif agent.api_key:
+            elif agent.sudo().api_key:
                 agent.status = 'online'
             else:
                 agent.status = 'unconfigured'

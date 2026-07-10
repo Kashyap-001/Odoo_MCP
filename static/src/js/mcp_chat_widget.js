@@ -4,6 +4,7 @@ import { useService } from "@web/core/utils/hooks";
 import { user } from "@web/core/user";
 import { Dropdown } from "@web/core/dropdown/dropdown";
 import { DropdownItem } from "@web/core/dropdown/dropdown_item";
+import { ErrorHandler } from "@web/core/utils/components";
 
 export class ChatWidget extends Component {
     static template = "mcp_gateway.ChatWidget";
@@ -26,6 +27,7 @@ export class ChatWidget extends Component {
             showTemplates: false,
             searchQuery: "",
             searchResults: null,
+            messageRenderErrors: new Set(),
         });
 
         this._sendSeq = 0;
@@ -227,7 +229,7 @@ export class ChatWidget extends Component {
             "mcp.session.message",
             [["session_id", "=", sessionId], ["role", "in", ["user", "assistant"]]],
             ["role", "content", "tool_name", "create_date"],
-            { order: "create_date asc" }
+            { order: "create_date asc, id asc" }
         );
         this.state.messages = messages.map(msg => {
             if (msg.role === 'user') {
@@ -556,11 +558,32 @@ export class ChatWidget extends Component {
     // ── Markdown renderer ───────────────────────────────────────────────────
 
     _escapeHtml(str) {
-        return str
+        return String(str)
             .replace(/&/g, '&amp;')
             .replace(/</g, '&lt;')
             .replace(/>/g, '&gt;')
             .replace(/"/g, '&quot;');
+    }
+
+    // Mirrors gateway.py's _repair_broken_content_json — best-effort repair for
+    // a {"_type": "...", "content": "..."} reply whose content string contains
+    // a literal, unescaped quote (a common LLM mistake). Only handles this
+    // project's own single-trailing-"content"-field shape, not general JSON.
+    // Client-side copy needed because the server-side fix only prevents new
+    // occurrences — it can't retroactively repair messages already stored.
+    _repairBrokenContentJson(text) {
+        const head = text.match(/^\s*\{\s*"_type"\s*:\s*"(\w+)"\s*,\s*"content"\s*:\s*"/);
+        if (!head) return null;
+        const rest = text.slice(head[0].length);
+        const tail = rest.match(/"\s*\}\s*$/);
+        if (!tail) return null;
+        const rawContent = rest.slice(0, tail.index);
+        const neutralized = rawContent.replace(/(?<!\\)"/g, '\\"');
+        try {
+            return { _type: head[1], content: JSON.parse('"' + neutralized + '"') };
+        } catch (e) {
+            return { _type: head[1], content: rawContent };
+        }
     }
 
     _inlineFormat(str) {
@@ -705,6 +728,53 @@ export class ChatWidget extends Component {
         return markup(this._renderMarkdown(content || ''));
     }
 
+    // _type:'html' content is already run through Odoo's html_sanitize server-side
+    // before storage (gateway.py's _sanitize_html_blocks) — wrap in markup() here
+    // so it actually renders as HTML instead of being escaped a second time by t-out.
+    _html(content) {
+        return markup(content || '');
+    }
+
+    // One malformed message (bad structuredData, a chart+attachment combo that
+    // trips an OWL edge case, etc.) must not take down the whole session's message
+    // list — each bubble is wrapped in an ErrorHandler that redirects here instead
+    // of letting the render exception propagate up through the shared template.
+    _onMessageRenderError(index, error) {
+        console.error('Failed to render chat message at index', index, error);
+        this.state.messageRenderErrors.add(index);
+    }
+
+    // Full icon class string for the attachment card — one branch per mimetype family.
+    _attachmentIconClass(mimetype) {
+        let kind = 'fa-file-word-o text-primary';
+        if (mimetype === 'application/pdf') kind = 'fa-file-pdf-o text-danger';
+        else if (mimetype === 'text/csv') kind = 'fa-file-text-o text-success';
+        else if (mimetype.includes('spreadsheet') || mimetype.includes('excel')) kind = 'fa-file-excel-o text-success';
+        return `fa ${kind} fa-2x mcp-ai-attachment-icon`;
+    }
+
+    // Short filetype label for the attachment card's meta line (icon already conveys the rest).
+    _attachmentTypeLabel(mimetype) {
+        if (mimetype === 'application/pdf') return 'PDF';
+        if (mimetype === 'text/csv') return 'CSV';
+        if (mimetype.includes('spreadsheet') || mimetype.includes('excel')) return 'Excel';
+        return 'File';
+    }
+
+    // /web/content/<id>?download=true forces Content-Disposition: attachment,
+    // which browsers refuse to render inline (blank iframe, forced download even
+    // with target="_blank"). Strip it for anything meant to be viewed, not saved.
+    _attachmentViewUrl(url) {
+        return url.replace('?download=true', '');
+    }
+
+    _formatBytes(bytes) {
+        if (!bytes && bytes !== 0) return '';
+        if (bytes < 1024) return `${bytes} B`;
+        if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+        return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+    }
+
     // Odoo's /web/image/<model>/<id>/<field> URLs are the same for every write —
     // browsers cache them by URL, so redisplaying one right after an update (e.g.
     // set_binary_field) can show the stale pre-update image. msgId (the session
@@ -772,7 +842,7 @@ export class ChatWidget extends Component {
         // 1. Binary check (images)
         if (type === 'binary' || (typeof value === 'string' && value.startsWith('/web/image'))) {
             if (typeof value === 'string' && value.startsWith('/')) {
-                return markup(`<img src="${value}" style="height:40px;width:40px;object-fit:contain;border-radius:4px;"/>`);
+                return markup(`<img src="${this._escapeHtml(value)}" style="height:40px;width:40px;object-fit:contain;border-radius:4px;"/>`);
             }
         }
 
@@ -790,12 +860,12 @@ export class ChatWidget extends Component {
             const isDanger = ['cancel','cancelled','refused','failed','error'].includes(valStrLower);
             const isSecondary = ['draft','new'].includes(valStrLower);
             const bgClass = isSuccess ? 'bg-success' : (isDanger ? 'bg-danger' : (isSecondary ? 'bg-secondary' : 'bg-primary'));
-            return markup(`<span class="badge ${bgClass}">${valStr}</span>`);
+            return markup(`<span class="badge ${bgClass}">${this._escapeHtml(valStr)}</span>`);
         }
 
         // 4. Red text for errors/failures
         if (typeof value === 'string' && (valStrLower.includes('error') || valStrLower.includes('failed') || valStrLower.includes('exception'))) {
-            return markup(`<span class="text-danger fw-bold">${value}</span>`);
+            return markup(`<span class="text-danger fw-bold">${this._escapeHtml(value)}</span>`);
         }
 
         // 5. Date / DateTime formatting
@@ -826,7 +896,7 @@ export class ChatWidget extends Component {
         if (Array.isArray(value) && value.length === 2 && typeof value[0] === 'number') {
             const relation = fieldMeta?.relation;
             if (relation) {
-                return markup(`<a href="#" class="mcp-record-link text-decoration-none fw-bold" style="color: var(--mcp-primary, #714B67);" data-model="${relation}" data-id="${value[0]}">${value[1]}</a>`);
+                return markup(`<a href="#" class="mcp-record-link text-decoration-none fw-bold" style="color: var(--mcp-primary, #714B67);" data-model="${relation}" data-id="${value[0]}">${this._escapeHtml(value[1])}</a>`);
             }
             return value[1];
         }
@@ -836,7 +906,7 @@ export class ChatWidget extends Component {
             const relation = typeof fieldMeta === 'object' ? fieldMeta.relation : null;
             const recordId = record?.id || (typeof value === 'number' ? value : null);
             if (relation && recordId) {
-                return markup(`<a href="#" class="mcp-record-link text-decoration-none fw-bold" style="color: var(--mcp-primary, #714B67);" data-model="${relation}" data-id="${recordId}">${value}</a>`);
+                return markup(`<a href="#" class="mcp-record-link text-decoration-none fw-bold" style="color: var(--mcp-primary, #714B67);" data-model="${relation}" data-id="${recordId}">${this._escapeHtml(value)}</a>`);
             }
         }
 
@@ -855,6 +925,7 @@ export class ChatWidget extends Component {
     onKeyDown(event) {
         if (event.key === 'Enter' && !event.shiftKey) {
             event.preventDefault();
+            if (this.state.loading) return;
             this.sendMessage();
         } else if (event.key === 'k' && (event.ctrlKey || event.metaKey)) {
             event.preventDefault();
@@ -956,7 +1027,15 @@ export class ChatWidget extends Component {
                 }
                 return { parsedContent: null, structuredData: parsed };
             }
-            catch (e) { /* fallthrough */ }
+            catch (e) {
+                // Common LLM mistake: an unescaped literal quote left inside the
+                // content string (e.g. `when you say "foo", ...`). Repair
+                // already-stored broken messages client-side too — the server-side
+                // fix (gateway.py's _repair_broken_content_json) only prevents new
+                // ones, it can't retroactively fix messages already in the DB.
+                const repaired = this._repairBrokenContentJson(content);
+                if (repaired) return { parsedContent: null, structuredData: repaired };
+            }
         }
         const typeIdx = content.indexOf('{"_type":');
         if (typeIdx > 0) {
@@ -996,12 +1075,44 @@ export class MessageBubble extends Component {
     static props = ["message"];
 }
 
+// ECharts' default yAxis/xAxis "name" renders at the top of the plot area
+// (nameLocation:'end'), the same vertical space a title+subtext block occupies —
+// the two collide whenever both are set and nobody gave the grid explicit top
+// clearance. Only steps in when needed; never touches an explicit grid.top the
+// chart's own data_code already set. Handles both object and array axes.
+function avoidTitleAxisNameOverlap(options) {
+    const titleObj = Array.isArray(options.title) ? options.title[0] : options.title;
+    const hasTitle = titleObj && (titleObj.text || titleObj.subtext);
+    if (!hasTitle) return options;
+
+    const getAxisName = (axis) => {
+        if (!axis) return null;
+        if (Array.isArray(axis)) {
+            for (const ax of axis) {
+                if (ax && ax.name) return ax.name;
+            }
+            return null;
+        }
+        return axis.name;
+    };
+
+    const hasAxisName = getAxisName(options.xAxis) || getAxisName(options.yAxis);
+    if (!hasAxisName) return options;
+    if (options.grid && options.grid.top !== undefined) return options;
+    const top = titleObj.subtext ? 90 : 60;
+    return { ...options, grid: { ...(options.grid || {}), top } };
+}
+
 // Genuine child component (not a t-call) so it gets its own mount/patch/unmount
 // lifecycle — needed to call echarts.init() only after its <div> actually exists,
 // and to dispose the chart instance when the message list re-renders it away.
 export class EchartPreview extends Component {
     static template = "mcp_gateway.EchartPreview";
-    static props = { optionsJson: { type: String, optional: true }, chartId: { type: Number, optional: true } };
+    static props = {
+        optionsJson: { type: String, optional: true },
+        chartId: { type: Number, optional: true },
+        title: { type: String, optional: true },
+    };
 
     setup() {
         this.orm = useService("orm");
@@ -1017,15 +1128,31 @@ export class EchartPreview extends Component {
         // messages from before chart_id existed.
         this._liveOptionsJson = null;
 
+        // Both hooks are async — anything thrown AFTER the first `await` becomes
+        // an unhandled promise rejection, which OWL's <ErrorHandler> (sync-render-
+        // only) does NOT catch, unlike a synchronous render error. A single bad
+        // chart could otherwise escape the per-message containment entirely.
+        // Wrap each hook's own body so a failure here degrades gracefully in just
+        // this chart's div, same as _render()'s own internal try/catch already does.
         onMounted(async () => {
-            window.addEventListener("resize", this._resizeHandler);
-            this._setupObserver();
-            await this._fetchLive();
-            this._render();
+            try {
+                window.addEventListener("resize", this._resizeHandler);
+                this._setupObserver();
+                await this._fetchLive();
+                await this._render();
+            } catch (e) {
+                console.error("EchartPreview onMounted failed:", e);
+                if (this.chartRef.el) this.chartRef.el.textContent = "Failed to render chart.";
+            }
         });
         onPatched(async () => {
-            await this._fetchLive();
-            this._render();
+            try {
+                await this._fetchLive();
+                await this._render();
+            } catch (e) {
+                console.error("EchartPreview onPatched failed:", e);
+                if (this.chartRef.el) this.chartRef.el.textContent = "Failed to render chart.";
+            }
         });
         onWillUnmount(() => {
             window.removeEventListener("resize", this._resizeHandler);
@@ -1056,12 +1183,12 @@ export class EchartPreview extends Component {
         // baking in a cramped canvas where labels overlap/get cut off. Re-render
         // whenever the container's actual size changes, mirroring echart_field.js.
         this._observer = new ResizeObserver(() => {
-            if (el.offsetWidth > 0 && el.offsetHeight > 0) this._render();
+            if (el.offsetWidth > 0 && el.offsetHeight > 0) this._render().catch(() => {});
         });
         this._observer.observe(el);
     }
 
-    _render() {
+    async _render() {
         const el = this.chartRef.el;
         if (!el) return;
         // Don't init/resize into a zero-size container (still-settling layout).
@@ -1080,6 +1207,7 @@ export class EchartPreview extends Component {
         let options;
         try {
             options = JSON.parse(rawOptions);
+            options = avoidTitleAxisNameOverlap(options);
         } catch (e) {
             el.textContent = "Invalid chart data.";
             return;
@@ -1092,9 +1220,59 @@ export class EchartPreview extends Component {
             el.textContent = "Failed to render chart.";
         }
     }
+
+    // Only meaningful once the chart is a real mcp.echart record — the
+    // controller reads it live from the DB, nothing to show for a bare
+    // options-only snapshot (old messages predating chart_id).
+    get viewUrl() {
+        return this.props.chartId ? `/mcp/echart/${this.props.chartId}/view` : null;
+    }
+
+    // Mirrors the sanitization generate_export_file uses server-side
+    // (re.sub(r'[^A-Za-z0-9_-]+', '_', title)) so chart downloads get the
+    // same "Chart_Title_Here.ext" naming convention as file exports.
+    get _filenameBase() {
+        const title = (this.props.title || "chart").trim();
+        return title.replace(/[^A-Za-z0-9_-]+/g, "_").replace(/^_+|_+$/g, "") || "chart";
+    }
+
+    // Pure client-side canvas capture — same technique as mcp_charts'
+    // ChartModal.downloadPng(), works even without a saved chart_id.
+    downloadPng() {
+        if (!this._chart) return;
+        const url = this._chart.getDataURL({ type: "png", pixelRatio: 2, backgroundColor: "#fff" });
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = `${this._filenameBase}.png`;
+        a.click();
+    }
+
+    // Capture the same PNG client-side, then hand it to the server to wrap in
+    // a one-line HTML page and run through Odoo's own wkhtmltopdf pipeline —
+    // identical mechanism to generate_export_file's PDF branch, no new dependency.
+    async downloadPdf() {
+        if (!this._chart) return;
+        const png = this._chart.getDataURL({ type: "png", pixelRatio: 2, backgroundColor: "#fff" });
+        try {
+            const result = await this.orm.call("mcp.echart", "action_export_chart_pdf", [png]);
+            const bytes = atob(result.pdf_base64);
+            const buffer = new Uint8Array(bytes.length);
+            for (let i = 0; i < bytes.length; i++) buffer[i] = bytes.charCodeAt(i);
+            const blobUrl = URL.createObjectURL(new Blob([buffer], { type: "application/pdf" }));
+            const a = document.createElement("a");
+            a.href = blobUrl;
+            a.download = `${this._filenameBase}.pdf`;
+            a.click();
+            URL.revokeObjectURL(blobUrl);
+        } catch (e) {
+            console.error("Chart PDF export failed:", e);
+        }
+    }
 }
 
-ChatWidget.components = { MessageBubble, Dropdown, DropdownItem, EchartPreview };
+EchartPreview.components = { Dropdown, DropdownItem };
+
+ChatWidget.components = { MessageBubble, Dropdown, DropdownItem, EchartPreview, ErrorHandler };
 
 import { registry } from "@web/core/registry";
 registry.category("actions").add("mcp_gateway.chat", ChatWidget);

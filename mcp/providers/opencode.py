@@ -1,13 +1,13 @@
 """
 mcp_gateway/mcp/providers/opencode.py
 
-OpenCode AI API adapter using OpenAI SDK.
+OpenCode AI API adapter — raw HTTPS via requests, no vendor SDK.
 
 Key classes:
   OpenCodeAdapter — Adapter for OpenCode AI models
 
 Dependencies:
-  - openai package (pip install openai)
+  - requests (already a hard Odoo dependency — no extra pip install needed)
   - base.AbstractProvider
 
 Developer notes:
@@ -18,6 +18,7 @@ Developer notes:
 """
 
 import logging
+import requests
 from .base import AbstractProvider
 from odoo import _
 from odoo.exceptions import UserError
@@ -196,7 +197,7 @@ class OpenCodeAdapter(AbstractProvider):
 
     def call(self, agent, messages: list, tool_specs: list) -> dict:
         """
-        Call OpenCode API using httpx.
+        Call OpenCode API using a direct HTTPS request.
 
         Routes to different endpoints based on model family:
         - claude-* models: POST /v1/messages (Anthropic format)
@@ -215,8 +216,6 @@ class OpenCodeAdapter(AbstractProvider):
             UserError: on API errors
         """
         try:
-            import httpx
-
             api_key = agent._decrypt_api_key()
             base_url = (agent.api_base_url or self.DEFAULT_BASE_URL).rstrip('/')
             model_id = (agent.model_name or '').lower()
@@ -242,8 +241,7 @@ class OpenCodeAdapter(AbstractProvider):
 
             _logger.info('Calling OpenCode with model: %s, endpoint: %s', agent.model_name, endpoint)
 
-            with httpx.Client(timeout=120.0) as client:
-                response = client.post(url, headers=headers, json=payload)
+            response = requests.post(url, headers=headers, json=payload, timeout=120)
 
             _logger.info('OpenCode response: status=%s, body=%s', response.status_code, response.text[:500])
 
@@ -264,9 +262,12 @@ class OpenCodeAdapter(AbstractProvider):
         except UserError:
             # Re-raise UserErrors immediately so they aren't caught and rewritten
             raise
-        except httpx.HTTPStatusError as e:
+        except requests.exceptions.HTTPError as e:
             _logger.error('OpenCode HTTP error: %s', str(e))
             raise UserError(_('OpenCode API error: %s') % str(e))
+        except (requests.exceptions.ConnectionError, requests.exceptions.Timeout) as e:
+            _logger.error('OpenCode connection error: %s', str(e))
+            raise UserError(_('Failed to connect to OpenCode API. Check your internet connection.'))
         except Exception as e:
             error_str = str(e)
             if 'authentication' in error_str.lower() or 'api key' in error_str.lower():
@@ -373,16 +374,16 @@ class OpenCodeAdapter(AbstractProvider):
             list: Available model IDs
         """
         try:
-            from openai import OpenAI
-
             api_key = agent._decrypt_api_key()
             base_url = (agent.api_base_url or self.DEFAULT_BASE_URL).rstrip('/')
 
-            client = OpenAI(api_key=api_key, base_url=base_url, timeout=10.0)
-
-            # Try to get models list from API
-            models_response = client.models.list()
-            models = [m.id for m in models_response.data]
+            response = requests.get(
+                f'{base_url}/models',
+                headers={'Authorization': f'Bearer {api_key}'},
+                timeout=10,
+            )
+            response.raise_for_status()
+            models = [m['id'] for m in response.json().get('data', [])]
 
             if models:
                 return models

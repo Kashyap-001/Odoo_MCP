@@ -30,6 +30,29 @@ from odoo import _
 _logger = logging.getLogger(__name__)
 
 
+def _retry_after_seconds(response):
+    """Parse a `Retry-After` header (seconds, the common case for LLM APIs) off
+    an HTTP response. Returns None if absent/unparseable so callers can fall
+    back to their own fixed backoff schedule."""
+    if response is None:
+        return None
+    value = response.headers.get('Retry-After')
+    if not value:
+        return None
+    try:
+        return max(0, int(float(value)))
+    except (TypeError, ValueError):
+        return None
+
+
+def attach_retry_after(exc, response):
+    """Attach a `.retry_after` (int seconds, or None) attribute to an exception
+    that's about to be raised, so an outer retry loop (gateway.py) can honor a
+    provider's real Retry-After header instead of always using a fixed backoff."""
+    exc.retry_after = _retry_after_seconds(response)
+    return exc
+
+
 class AbstractProvider(ABC):
     """
     Abstract base class for LLM provider adapters.
@@ -227,7 +250,7 @@ class AbstractProvider(ABC):
                 except requests.exceptions.HTTPError as e:
                     if e.response.status_code in (500, 502, 503, 429):
                         if attempt < max_retries:
-                            backoff = 2 ** attempt
+                            backoff = _retry_after_seconds(e.response) or (2 ** attempt)
                             self._logger.warning(
                                 '%s attempt %d failed (HTTP %d): retrying in %ds',
                                 agent.provider, attempt + 1, e.response.status_code, backoff

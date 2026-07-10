@@ -1,13 +1,13 @@
 {
-    'name': 'AI Gateway',
-    'version': '18.0.2.0.4',
+    'name': 'Ai ChatBot',
+    'version': '18.0.1.0.0',
     'category': 'Technical',
     'license': 'LGPL-3',
     'author': 'AI Gateway Contributors',
     'website': 'https://github.com/your-org/odoo-mcp-gateway',
-    'summary': 'AI Agent Gateway for Odoo 18 — LLM Integration with Tool Registry',
+    'summary': 'Ai ChatBot for Odoo 18 — LLM Integration with Tool Registry',
     'description': '''
-AI Gateway is a production-ready Odoo 18 module for integrating Large Language Models
+Ai ChatBot is a production-ready Odoo 18 module for integrating Large Language Models
 directly into your Odoo environment. Configure multiple AI agents, register tools
 (Odoo-native and external), control access per user/group, and enable end users to
 chat with agents directly inside Odoo.
@@ -25,20 +25,26 @@ Features:
   • Full HTTP API for external integrations
 
 Requirements:
-  • Python packages: requests, cryptography, anthropic, openai, google-generativeai, mcp
-  • At least one AI provider API key (Anthropic, OpenAI, Gemini, MiniMax) or Ollama instance
+  • Python packages: requests, cryptography, openpyxl, xlrd — all four are already
+    required by Odoo itself, so this module needs ZERO extra pip installs. Every
+    LLM provider (Anthropic, OpenAI, Gemini, Grok, Ollama, OpenCode) is called via
+    plain HTTPS requests, no vendor SDK.
+  • wkhtmltopdf (system binary, not pip) for the generate_export_file PDF export —
+    already required by Odoo itself for its own PDF reports
+  • At least one AI provider API key (Anthropic, OpenAI, Gemini, Grok, OpenCode) or Ollama instance
     ''',
     'depends': ['base', 'web', 'mail', 'bus'],
     'external_dependencies': {
-        # Only list packages that are ALWAYS required (not provider-specific)
-        # Provider SDKs are imported lazily inside each provider's call() method
-        # so the module installs fine even if only some providers are installed.
-        'python': ['requests', 'cryptography', 'httpx'],
+        # requests/cryptography/openpyxl/xlrd are all already required by Odoo
+        # itself (see odoo/requirements.txt) — listed here for clarity, not
+        # because this module adds anything beyond what Odoo already needs.
+        'python': ['requests', 'cryptography', 'openpyxl', 'xlrd'],
     },
     'data': [
         'security/mcp_security.xml',
         'security/ir.model.access.csv',
         'security/mcp_record_rules.xml',
+        'data/mcp_dashboard_data.xml',
         'data/mcp_model_options.xml',
         'data/default_tools.xml',
         'data/default_prompt_templates.xml',
@@ -58,6 +64,7 @@ Requirements:
         'views/mcp_cost_entry_views.xml',
         'views/mcp_external_server_views.xml',
         'views/mcp_echart_views.xml',
+        'views/mcp_dashboard_views.xml',
         'views/menu.xml',
     ],
     'assets': {
@@ -71,4 +78,7 @@ Requirements:
     'installable': True,
     'auto_install': False,
     'application': True,
+    'images': ['static/description/AiChatbot.gif']
 }
+
+

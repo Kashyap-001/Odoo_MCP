@@ -497,6 +497,29 @@
             <field name="output_sample">{"id": 1, "name": "June Sales"}</field>
         </record>
 
+        <record id="tool_generate_export_file" model="mcp.tool">
+            <field name="name">generate_export_file</field>
+            <field name="display_name_label">Generate Export File (PDF/XLSX/CSV)</field>
+            <field name="description">Generate a downloadable PDF, XLSX, or CSV file from Odoo data. Use when the user asks to "export", "download as excel/csv/pdf", "give me a file", or "generate a report". SINGLE tool call. Write data_code Python that queries the ORM and returns rows as a list of lists — FIRST row is the header, every other row is data, all cells must be strings/numbers (not dicts or records). Do NOT build a workbook, csv writer, or PDF yourself — that always fails (safe_eval blocks object attribute assignment entirely, and library bindings here are read-only). Example: result=env['sale.order'].search_read(domain=[],fields=['name','partner_id','amount_total']); rows=[['Order','Customer','Total']]; rows+=[[r['name'], r['partner_id'][1] if r['partner_id'] else '', r['amount_total']] for r in result]; return rows. The download card is shown to the user automatically as soon as this tool succeeds — do not call any other tool afterward for the same request, and do not describe the file's contents yourself.</field>
+            <field name="category_id" ref="category_advanced"/>
+            <field name="tool_type">odoo</field>
+            <field name="odoo_model">ir.model</field>
+            <field name="odoo_method">generate_export_file</field>
+            <field name="is_readonly">False</field>
+            <field name="requires_confirm">False</field>
+            <field name="input_schema">{
+  "type": "object",
+  "properties": {
+    "format": {"type": "string", "enum": ["csv", "xlsx", "pdf"], "description": "Output file format"},
+    "title": {"type": "string", "description": "Report title (shown as the PDF heading; also used to derive the filename if filename is omitted)"},
+    "filename": {"type": "string", "description": "Optional filename without extension — the correct extension is appended automatically"},
+    "data_code": {"type": "string", "description": "Python script with Odoo ORM access (env, user available). Must end with: return [[header1, header2, ...], [row1col1, row1col2, ...], ...] — a plain list of rows, header row first."}
+  },
+  "required": ["format", "data_code"]
+}</field>
+            <field name="output_sample">{"id": 5, "url": "/web/content/5?download=true", "filename": "sales_report.xlsx", "mimetype": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "size_bytes": 6482}</field>
+        </record>
+
         <record id="tool_ai_agent_query" model="mcp.tool">
             <field name="name">ai_agent_query</field>
             <field name="display_name_label">Delegate Query to AI Agent</field>

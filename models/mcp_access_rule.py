@@ -157,7 +157,7 @@ class AccessRule(models.Model):
             - Empty agent_ids/tool_ids in a rule means "all" are allowed
             - If user matches no rules, returns empty sets
         """
-        matching_rules = self.search([
+        matching_rules = self.sudo().search([
             ('active', '=', True),
             '|', ('group_ids', 'in', user.groups_id.ids),
                  ('user_ids', 'in', user.id),

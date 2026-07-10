@@ -90,19 +90,19 @@
 
     <!-- ==================== MENU ITEMS ==================== -->
 
-    <!-- Root menu - AI Gateway (requires at least group_mcp_user) -->
-    <menuitem id="menu_mcp_root" name="AI Gateway" sequence="100"
+    <!-- Root menu - Ai ChatBot (requires at least group_mcp_user) -->
+    <menuitem id="menu_mcp_root" name="Ai ChatBot" sequence="100"
+              groups="mcp_gateway.group_mcp_user"/>
+
+    <!-- Chat menu item (user+) -->
+    <menuitem id="menu_mcp_chat" name="Chat" action="action_mcp_chat_widget"
+              parent="menu_mcp_root" sequence="5"
               groups="mcp_gateway.group_mcp_user"/>
 
     <!-- Agents menu item (manager+) -->
     <menuitem id="menu_mcp_agents" name="Agents" action="action_mcp_agent"
-              parent="menu_mcp_root" sequence="5"
-              groups="mcp_gateway.group_mcp_manager"/>
-
-    <!-- Chat menu item (user+) -->
-    <menuitem id="menu_mcp_chat" name="Chat" action="action_mcp_chat_widget"
               parent="menu_mcp_root" sequence="10"
-              groups="mcp_gateway.group_mcp_user"/>
+              groups="mcp_gateway.group_mcp_manager"/>
 
     <!-- Tools submenu (manager+) -->
     <menuitem id="menu_mcp_tools" name="Tools" parent="menu_mcp_root" sequence="20"
@@ -160,6 +160,12 @@
     <!-- Webhook Triggers (admin only) -->
     <menuitem id="menu_mcp_webhook_triggers" name="Webhook Triggers"
               action="action_mcp_webhook_trigger" parent="menu_mcp_configuration" sequence="30"
+              groups="mcp_gateway.group_mcp_admin"/>
+
+    <!-- Dashboards (admin only) — classic-view fallback for the OWL Chart
+         Gallery's dashboard management; previously had no menu entry at all. -->
+    <menuitem id="menu_mcp_dashboards" name="Dashboards"
+              action="action_mcp_dashboard" parent="menu_mcp_configuration" sequence="40"
               groups="mcp_gateway.group_mcp_admin"/>
 
 </odoo>

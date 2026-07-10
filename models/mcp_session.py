@@ -22,7 +22,6 @@ Developer notes:
 
 import logging
 import re
-import base64
 from datetime import datetime, timedelta
 from odoo import fields, models, api, _
 
@@ -51,7 +50,7 @@ class Session(models.Model):
 
     _name = 'mcp.session'
     _description = _('Agent Session')
-    _order = 'create_date DESC'
+    _order = 'create_date DESC, id DESC'
     _inherit = ['mail.thread']
 
     # ── Identifiers ─────────────────────────────────────────────────
@@ -389,15 +388,17 @@ class Session(models.Model):
             else:
                 lines.append(msg.content)
 
-        content = '\n'.join(lines)
-        encoded = base64.b64encode(content.encode()).decode()
-        filename = f'{self.name.replace(" ", "_")}.txt'
-
+        # ir.actions.act_url naively prepends '/' to any url that doesn't already
+        # start with 'http' or '/' (see Odoo's action_service.js _executeActURLAction) —
+        # a data: URI doesn't match either, so the browser ends up requesting the
+        # literal path "/data:text/plain;base64,...." from this Odoo server itself
+        # (414 Request-URI Too Long for real transcripts, 404 for short ones).
+        # Route through the existing /mcp/session/<id>/transcript controller instead,
+        # which is a real same-origin path and needs no client-side data: URI at all.
         return {
             'type': 'ir.actions.act_url',
-            'url': f'data:text/plain;base64,{encoded}',
+            'url': f'/mcp/session/{self.id}/transcript',
             'target': 'download',
-            'name': filename,
         }
 
     def action_replay(self):
@@ -440,7 +441,15 @@ class SessionMessage(models.Model):
 
     _name = 'mcp.session.message'
     _description = _('Session Message')
-    _order = 'create_date ASC'
+    # Every message written within one agentic turn shares the EXACT same
+    # create_date (Postgres's now() is fixed for the whole transaction) — a
+    # tiebreaker is required or same-timestamp rows return in undefined order.
+    # 2026-07-06 fixed this for the chat widget's own ORM call (explicit
+    # `order: "create_date asc, id asc"`), but anything reading
+    # session_message_ids without an override — like action_export_transcript —
+    # still inherited this model's own default, which had no tiebreaker. Fixed
+    # at the source so every current and future reader gets it for free.
+    _order = 'create_date ASC, id ASC'
 
     session_id = fields.Many2one(
         comodel_name='mcp.session',

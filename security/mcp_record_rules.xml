@@ -49,5 +49,53 @@
             <field name="groups" eval="[(4, ref('mcp_gateway.group_mcp_admin'))]"/>
             <field name="domain_force">[(1, '=', 1)]</field>
         </record>
+
+        <!-- Record rule: Regular users see their own dashboards plus any shared ones -->
+        <record id="mcp_dashboard_user_rule" model="ir.rule">
+            <field name="name">User can read own or shared dashboards</field>
+            <field name="model_id" ref="model_mcp_dashboard"/>
+            <field name="groups" eval="[(4, ref('base.group_user'))]"/>
+            <field name="domain_force">['|', ('create_uid', '=', user.id), ('is_shared', '=', True)]</field>
+        </record>
+
+        <!-- Record rule: Manager users can read all dashboards -->
+        <record id="mcp_dashboard_manager_rule" model="ir.rule">
+            <field name="name">Manager can read all dashboards</field>
+            <field name="model_id" ref="model_mcp_dashboard"/>
+            <field name="groups" eval="[(4, ref('mcp_gateway.group_mcp_manager'))]"/>
+            <field name="domain_force">[(1, '=', 1)]</field>
+        </record>
+
+        <!-- Record rule: Admin users can read all dashboards -->
+        <record id="mcp_dashboard_admin_rule" model="ir.rule">
+            <field name="name">Admin can read all dashboards</field>
+            <field name="model_id" ref="model_mcp_dashboard"/>
+            <field name="groups" eval="[(4, ref('mcp_gateway.group_mcp_admin'))]"/>
+            <field name="domain_force">[(1, '=', 1)]</field>
+        </record>
+
+        <!-- Record rule: Regular users see their own charts plus any public ones -->
+        <record id="mcp_echart_user_rule" model="ir.rule">
+            <field name="name">User can read own or public charts</field>
+            <field name="model_id" ref="model_mcp_echart"/>
+            <field name="groups" eval="[(4, ref('base.group_user'))]"/>
+            <field name="domain_force">['|', ('create_uid', '=', user.id), ('is_public', '=', True)]</field>
+        </record>
+
+        <!-- Record rule: Manager users can read all charts -->
+        <record id="mcp_echart_manager_rule" model="ir.rule">
+            <field name="name">Manager can read all charts</field>
+            <field name="model_id" ref="model_mcp_echart"/>
+            <field name="groups" eval="[(4, ref('mcp_gateway.group_mcp_manager'))]"/>
+            <field name="domain_force">[(1, '=', 1)]</field>
+        </record>
+
+        <!-- Record rule: Admin users can read all charts -->
+        <record id="mcp_echart_admin_rule" model="ir.rule">
+            <field name="name">Admin can read all charts</field>
+            <field name="model_id" ref="model_mcp_echart"/>
+            <field name="groups" eval="[(4, ref('mcp_gateway.group_mcp_admin'))]"/>
+            <field name="domain_force">[(1, '=', 1)]</field>
+        </record>
     </data>
 </odoo>

@@ -1,21 +1,19 @@
 # MCP Gateway — Python dependencies
-# Install before installing the Odoo module:
-#   pip install -r requirements.txt
+#
+# ZERO extra installs needed. Every package below is already required by
+# Odoo 18 itself (see odoo/requirements.txt) — this file exists purely for
+# documentation, not because `pip install -r requirements.txt` is a real step.
+#
+# Every LLM provider (Anthropic, OpenAI, Gemini, Grok, Ollama, OpenCode) is
+# called via plain HTTPS requests — no vendor SDK (anthropic/openai/google-genai)
+# is used or needed anywhere in this module.
 
-# Always required
-requests>=2.28.0
-cryptography>=41.0.0
-httpx>=0.24.0
+requests>=2.28.0        # HTTP calls to every LLM provider + external MCP servers
+cryptography>=41.0.0    # Fernet encryption for API keys at rest
+openpyxl>=3.1.0         # Read/write .xlsx (spreadsheet import, generate_export_file)
+xlrd>=2.0.0             # Read legacy .xls uploads
+jinja2>=3.0.0           # Webhook message template rendering
 
-# Provider SDKs — install only the ones you need
-# Anthropic (Claude)
-anthropic>=0.40.0
-
-# OpenAI (GPT-5, GPT-4o) — also used by Grok (xAI)
-openai>=1.30.0
-
-# Google Gemini — use the NEW SDK (google-genai), not google-generativeai
-google-genai>=1.0.0
-
-# Jinja2 — for webhook message templates (usually pre-installed with Odoo)
-jinja2>=3.0.0
+# wkhtmltopdf (system binary, not a pip package) is used for generate_export_file's
+# PDF output via Odoo's own built-in _run_wkhtmltopdf — already required by any
+# Odoo install that prints its own PDF reports (invoices, sale orders, etc.).
