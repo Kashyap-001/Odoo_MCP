@@ -213,8 +213,14 @@ class _ReadOnlyRecordset:
         value = getattr(self._rs, name)
         if not callable(value):
             return _wrap_readonly(value)
-        def _wrapped(*args, **kwargs):
-            return _wrap_readonly(value(*args, **kwargs))
+        if name == 'read_group':
+            def _wrapped(*args, **kwargs):
+                result = value(*args, **kwargs)
+                _alias_read_group_count(result)
+                return _wrap_readonly(result)
+        else:
+            def _wrapped(*args, **kwargs):
+                return _wrap_readonly(value(*args, **kwargs))
         return _wrapped
 
     def __iter__(self):
@@ -255,6 +261,23 @@ class _ReadOnlyEnv:
         def _wrapped(*args, **kwargs):
             return _wrap_readonly(value(*args, **kwargs))
         return _wrapped
+
+
+def _alias_read_group_count(rows):
+    """Odoo's read_group only names the count key '__count' when lazy=False or
+    groupby has 2+ fields. With the default lazy=True and a single groupby field
+    (the common case), the count instead lives under '<field>_count' — e.g.
+    'city_count'. AI-authored data_code always writes row['__count'] (it's the
+    documented convention), so alias whichever '*_count' key is actually present
+    onto '__count' too."""
+    if not isinstance(rows, list):
+        return
+    for row in rows:
+        if isinstance(row, dict) and '__count' not in row:
+            for key, val in row.items():
+                if key.endswith('_count'):
+                    row['__count'] = val
+                    break
 
 
 def _normalize_domain(domain):

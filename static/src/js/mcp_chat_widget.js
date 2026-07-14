@@ -59,6 +59,10 @@ export class ChatWidget extends Component {
             this.state.agents = response;
         } catch (error) {
             console.error("MCP: Failed to load agents", error);
+            this.notificationService.add(
+                "Couldn't load AI agents — you may not have access. Contact your administrator.",
+                { type: 'danger' }
+            );
         }
     }
 
@@ -586,6 +590,33 @@ export class ChatWidget extends Component {
         }
     }
 
+    // Mirrors gateway.py's _decode_stray_unicode_escapes — some LLMs write
+    // literal '📊'-style escape text instead of the actual emoji
+    // glyph. A literal backslash is legal inside a JSON string, so
+    // JSON.parse() leaves it untouched — it renders as raw backslash-u text
+    // instead of the intended character. Decode any such sequences back into
+    // real characters. Client-side copy needed for the same reason as
+    // _repairBrokenContentJson — already-stored messages need to self-heal too.
+    _decodeStrayUnicodeEscapes(text) {
+        if (typeof text !== 'string' || !text.includes('\\u')) return text;
+        text = text.replace(
+            /\\u(d[89ab][0-9a-f]{2})\\u(d[c-f][0-9a-f]{2})/gi,
+            (m, hi, lo) => String.fromCodePoint(0x10000 + (parseInt(hi, 16) - 0xD800) * 0x400 + (parseInt(lo, 16) - 0xDC00))
+        );
+        return text.replace(/\\u([0-9a-f]{4})/gi, (m, cp) => String.fromCodePoint(parseInt(cp, 16)));
+    }
+
+    _decodeContentUnicodeEscapes(data) {
+        if (!data || typeof data !== 'object') return data;
+        if (typeof data.content === 'string') {
+            data.content = this._decodeStrayUnicodeEscapes(data.content);
+        }
+        if (data._type === 'mixed' && Array.isArray(data.blocks)) {
+            data.blocks.forEach(block => this._decodeContentUnicodeEscapes(block));
+        }
+        return data;
+    }
+
     _inlineFormat(str) {
         let res = str
             .replace(/\*\*([^*\n]+)\*\*/g, '<strong>$1</strong>')
@@ -1025,7 +1056,7 @@ export class ChatWidget extends Component {
                 if (parsed.company_currency_symbol) {
                     this.state.companyCurrencySymbol = parsed.company_currency_symbol;
                 }
-                return { parsedContent: null, structuredData: parsed };
+                return { parsedContent: null, structuredData: this._decodeContentUnicodeEscapes(parsed) };
             }
             catch (e) {
                 // Common LLM mistake: an unescaped literal quote left inside the
@@ -1034,7 +1065,7 @@ export class ChatWidget extends Component {
                 // fix (gateway.py's _repair_broken_content_json) only prevents new
                 // ones, it can't retroactively fix messages already in the DB.
                 const repaired = this._repairBrokenContentJson(content);
-                if (repaired) return { parsedContent: null, structuredData: repaired };
+                if (repaired) return { parsedContent: null, structuredData: this._decodeContentUnicodeEscapes(repaired) };
             }
         }
         const typeIdx = content.indexOf('{"_type":');
@@ -1044,7 +1075,7 @@ export class ChatWidget extends Component {
                 if (parsed._type) {
                     if (parsed.company_currency_symbol)
                         this.state.companyCurrencySymbol = parsed.company_currency_symbol;
-                    return { parsedContent: null, structuredData: parsed };
+                    return { parsedContent: null, structuredData: this._decodeContentUnicodeEscapes(parsed) };
                 }
             } catch (e) { /* fallthrough */ }
         }

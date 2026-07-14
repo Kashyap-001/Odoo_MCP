@@ -252,6 +252,41 @@ def _sanitize_html_blocks(data):
     return data
 
 
+_SURROGATE_PAIR_ESCAPE_RE = re.compile(r'\\u(d[89ab][0-9a-f]{2})\\u(d[c-f][0-9a-f]{2})', re.IGNORECASE)
+_UNICODE_ESCAPE_RE = re.compile(r'\\u([0-9a-f]{4})', re.IGNORECASE)
+
+
+def _decode_stray_unicode_escapes(text):
+    """Some LLMs occasionally write literal '\\uD83D\\uDCCA'-style escape text
+    instead of the actual emoji glyph (e.g. inside a plain-text reply's
+    content). A literal backslash is legal inside a JSON string, so
+    json.loads() never touches it — it survives all the way to the browser
+    as raw backslash-u text instead of the intended character. Decode any
+    such literal escape sequences (surrogate pairs first, then lone BMP
+    escapes) back into real characters."""
+    if not isinstance(text, str) or '\\u' not in text:
+        return text
+    text = _SURROGATE_PAIR_ESCAPE_RE.sub(
+        lambda m: chr(0x10000 + (int(m.group(1), 16) - 0xD800) * 0x400 + (int(m.group(2), 16) - 0xDC00)),
+        text,
+    )
+    return _UNICODE_ESCAPE_RE.sub(lambda m: chr(int(m.group(1), 16)), text)
+
+
+def _decode_content_unicode_escapes(data):
+    """Recursively apply _decode_stray_unicode_escapes to every 'content'
+    string, including ones nested inside a {"_type": "mixed", "blocks": [...]}
+    array — same recursive shape as _sanitize_html_blocks."""
+    if not isinstance(data, dict):
+        return data
+    if isinstance(data.get('content'), str):
+        data['content'] = _decode_stray_unicode_escapes(data['content'])
+    if data.get('_type') == 'mixed' and isinstance(data.get('blocks'), list):
+        for block in data['blocks']:
+            _decode_content_unicode_escapes(block)
+    return data
+
+
 def _repair_broken_content_json(text):
     """Best-effort repair for a common LLM mistake: a literal, unescaped quote
     character left inside a {"_type": "...", "content": "..."} reply's content
@@ -700,19 +735,19 @@ IMAGE FIELDS: When search_read returns image_1920, image_128, etc., the value is
 
         # Final guard: if AI returned plain text (ignored format instruction), wrap as {"_type": "text"}
         if assistant_text and not assistant_text.strip().startswith('{'):
-            assistant_text = json.dumps({"_type": "text", "content": assistant_text})
+            assistant_text = json.dumps({"_type": "text", "content": _decode_stray_unicode_escapes(assistant_text)})
 
         # Sanitize any raw-HTML block before it's ever stored/displayed — the
         # model's own reply is untrusted input (see _sanitize_html_blocks).
         if assistant_text:
             try:
                 parsed = json.loads(assistant_text)
-                assistant_text = json.dumps(_sanitize_html_blocks(parsed))
+                assistant_text = json.dumps(_sanitize_html_blocks(_decode_content_unicode_escapes(parsed)))
             except (json.JSONDecodeError, TypeError):
                 repaired = _repair_broken_content_json(assistant_text)
                 if repaired:
                     _logger.warning('Repaired malformed JSON in assistant reply (unescaped quote in content)')
-                    assistant_text = json.dumps(_sanitize_html_blocks(repaired))
+                    assistant_text = json.dumps(_sanitize_html_blocks(_decode_content_unicode_escapes(repaired)))
 
         # Log assistant reply
         self.env['mcp.session.message'].create({
