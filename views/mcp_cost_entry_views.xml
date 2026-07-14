@@ -7,6 +7,8 @@
         <field name="arch" type="xml">
             <list string="Cost Entries" decoration-warning="total_cost_usd &gt; 1" decoration-danger="total_cost_usd &gt; 10">
                 <field name="session_id" />
+                <field name="agent_id" optional="show" />
+                <field name="user_id" optional="show" />
                 <field name="input_tokens" />
                 <field name="output_tokens" />
                 <field name="total_cost_usd" sum="Total Cost" />
@@ -36,6 +38,30 @@
                 <field name="session_id" type="row" />
                 <field name="total_cost_usd" type="measure" />
             </pivot>
+        </field>
+    </record>
+
+    <!-- Search View - Filter and group cost entries -->
+    <record id="view_mcp_cost_entry_search" model="ir.ui.view">
+        <field name="name">mcp.cost.entry.search</field>
+        <field name="model">mcp.cost.entry</field>
+        <field name="arch" type="xml">
+            <search string="Search Cost Entries">
+                <field name="session_id" string="Session" />
+                <field name="agent_id" string="Agent" />
+                <field name="user_id" string="User" />
+                <separator />
+                <filter name="this_week" string="This Week"
+                    domain="[('create_date', '&gt;=', (context_today() - relativedelta(weeks=1)).strftime('%Y-%m-%d'))]" />
+                <filter name="this_month" string="This Month"
+                    domain="[('create_date', '&gt;=', (context_today() - relativedelta(months=1)).strftime('%Y-%m-%d'))]" />
+                <separator />
+                <group expand="0" string="Group By">
+                    <filter name="group_agent" string="Agent" domain="[]" context="{'group_by': 'agent_id'}" />
+                    <filter name="group_user" string="User" domain="[]" context="{'group_by': 'user_id'}" />
+                    <filter name="group_month" string="Month" domain="[]" context="{'group_by': 'create_date:month'}" />
+                </group>
+            </search>
         </field>
     </record>
 </odoo>

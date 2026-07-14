@@ -16,11 +16,6 @@
             <field name="description">Tools to create, update, delete, and execute methods on database records</field>
         </record>
 
-        <record id="category_code" model="mcp.tool.category">
-            <field name="name">Code Inspection Tools</field>
-            <field name="description">Tools to inspect and search custom module and addons code</field>
-        </record>
-
         <record id="category_advanced" model="mcp.tool.category">
             <field name="name">Advanced &amp; Sandbox Tools</field>
             <field name="description">High-risk tools including safe_eval scripting, EChart visualizations, module compilers, and subagent queries</field>
@@ -52,7 +47,7 @@
         <record id="tool_get_model_schema" model="mcp.tool">
             <field name="name">get_model_schema</field>
             <field name="display_name_label">Get Model Schema</field>
-            <field name="description">Retrieve the FIELD definitions of an Odoo model (field names, types, relations). Call this ONCE per model when you are not 100% certain of field names. After calling it, immediately proceed to search_read or execute_orm — do NOT call get_model_schema again on the same model. IMPORTANT: This tool shows FIELDS only, NOT Python methods. If you need to find what method to call on a model (e.g. action_confirm, action_quotation_send_email), use search_module_code to find the method name, then call it via execute_orm. Never use get_model_schema to look up methods — it will never show them.</field>
+            <field name="description">Retrieve the FIELD definitions of an Odoo model (field names, types, relations). Call this ONCE per model when you are not 100% certain of field names. After calling it, immediately proceed to search_read or execute_orm — do NOT call get_model_schema again on the same model. IMPORTANT: This tool shows FIELDS only, NOT Python methods. To call a business method use execute_orm directly — common methods you already know: action_confirm, action_quotations_send, action_cancel, write, unlink. Never read source code files to look up method names.</field>
             <field name="category_id" ref="category_read"/>
             <field name="tool_type">odoo</field>
             <field name="odoo_model">ir.model</field>
@@ -73,7 +68,7 @@
         <record id="tool_search_read" model="mcp.tool">
             <field name="name">search_read</field>
             <field name="display_name_label">Search Records</field>
-            <field name="description">Find, list, filter, or count records in any Odoo model. ALWAYS call this tool when the user asks: "show me all", "find customers", "list invoices", "get orders", "how many records", "search for", "fetch", "retrieve". Never answer data questions from memory — always query with this tool first. IMPORTANT: Never guess field names. If you are not 100% certain which fields exist on the model, call get_model_schema first, then use the exact field names it returns.</field>
+            <field name="description">Find, list, filter, or count records in any Odoo model. ALWAYS call this tool when the user asks: "show me all", "find customers", "list invoices", "get orders", "how many records", "search for", "fetch", "retrieve". Never answer data questions from memory — always query with this tool first. IMPORTANT: Never guess field names. If you are not 100% certain which fields exist on the model, call get_model_schema first, then use the exact field names it returns. Domain format: [['field','operator',value]]. Use 'ilike' for fuzzy name search, '=' for exact match. Example: [['state','=','draft'],['partner_id.name','ilike','Azure']].</field>
             <field name="category_id" ref="category_read"/>
             <field name="tool_type">odoo</field>
             <field name="odoo_model">ir.model</field>
@@ -119,7 +114,7 @@
         <record id="tool_read_group" model="mcp.tool">
             <field name="name">read_group</field>
             <field name="display_name_label">Aggregate Records (Group By)</field>
-            <field name="description">Aggregate and group database records for statistics and reports. Use when the user asks: "total sales by month", "count orders per customer", "sum revenue by product", "how much in total", "group by", "breakdown of", "average", "statistics". Never calculate aggregates manually from raw records — use this tool. Call directly without schema lookup — you know the field names for standard Odoo models.</field>
+            <field name="description">Aggregate and group database records for statistics and reports. Use when the user asks: "total sales by month", "count orders per customer", "sum revenue by product", "how much in total", "group by", "breakdown of", "average", "statistics". Never calculate aggregates manually from raw records — use this tool. NEVER guess field names — call get_model_schema first if unsure which fields exist on the model.</field>
             <field name="category_id" ref="category_read"/>
             <field name="tool_type">odoo</field>
             <field name="odoo_model">ir.model</field>
@@ -148,7 +143,7 @@
         <record id="tool_create_record" model="mcp.tool">
             <field name="name">create_record</field>
             <field name="display_name_label">Create Record</field>
-            <field name="description">Create a new record in Odoo. Use when the user says: "create a", "add a new", "make a new", "register a", "insert a". Examples: create a customer, create a sale order, add a new product. You know the required fields for common models — call this directly without schema lookup.</field>
+            <field name="description">Create a new record in Odoo. Use when the user says: "create a", "add a new", "make a new", "register a", "insert a". NEVER guess field names — always call get_model_schema first. Common Odoo 18 rename: product.template uses `type` (consu, service, combo) NOT `detailed_type`. Use match_field to prevent duplicates: if a record with that field value already exists, the create is skipped and the existing ID is returned (e.g. match_field="default_code" for products).</field>
             <field name="category_id" ref="category_write"/>
             <field name="tool_type">odoo</field>
             <field name="odoo_model">ir.model</field>
@@ -159,7 +154,8 @@
   "type": "object",
   "properties": {
     "model": {"type": "string", "description": "Technical model name (e.g. \"sale.order\")"},
-    "values": {"type": "object", "description": "Key-value dictionary mapping fields to create values"}
+    "values": {"type": "object", "description": "Key-value dictionary mapping fields to create values"},
+    "match_field": {"type": "string", "description": "Optional field to deduplicate on (e.g. 'default_code'). If a record with this value already exists, create is skipped and existing ID returned."}
   },
   "required": ["model", "values"]
 }</field>
@@ -169,7 +165,7 @@
         <record id="tool_update_record" model="mcp.tool">
             <field name="name">update_record</field>
             <field name="display_name_label">Update Record(s)</field>
-            <field name="description">Update fields on one or more existing records. Use when the user says: "update", "change", "set the", "modify", "edit record", "rename". Always use search_read first to get the record IDs before updating.</field>
+            <field name="description">Update fields on one or more existing records. Use when the user says: "update", "change", "set the", "modify", "edit record", "rename". Always use search_read first to get the record IDs before updating. NEVER guess field names — call get_model_schema first if unsure.</field>
             <field name="category_id" ref="category_write"/>
             <field name="tool_type">odoo</field>
             <field name="odoo_model">ir.model</field>
@@ -234,60 +230,13 @@
         </record>
 
         <!-- ──────────────────────────────────────────────────────────────── -->
-        <!-- CODE INSPECTION TOOLS                                            -->
-        <!-- ──────────────────────────────────────────────────────────────── -->
-
-        <record id="tool_code_search" model="mcp.tool">
-            <field name="name">code_search</field>
-            <field name="display_name_label">Search Addons Code</field>
-            <field name="description">Search the module source code for classes, methods, or patterns. Use when the user asks: "where is X defined", "find the class", "search codebase for", "which file contains", "show me the implementation of". Returns file path, line number, and matching content.</field>
-            <field name="category_id" ref="category_code"/>
-            <field name="tool_type">odoo</field>
-            <field name="odoo_model">ir.model</field>
-            <field name="odoo_method">code_search</field>
-            <field name="is_readonly">True</field>
-            <field name="requires_confirm">False</field>
-            <field name="input_schema">{
-  "type": "object",
-  "properties": {
-    "query": {"type": "string", "description": "Pattern regex to search for"},
-    "path_filter": {"type": "string", "description": "Glob pattern to filter paths (e.g., \"*.py\")"}
-  },
-  "required": ["query"]
-}</field>
-            <field name="output_sample">[{"file": "models/res_partner.py", "line": 42, "content": "class ResPartner(models.Model):"}]</field>
-        </record>
-
-        <record id="tool_code_read" model="mcp.tool">
-            <field name="name">code_read</field>
-            <field name="display_name_label">Read Code File</field>
-            <field name="description">Read the contents of a source file from the module directory. Use when the user says: "show me the file", "read the code in", "open the file", "what is in", or after code_search returns a file path and you need to see the full content.</field>
-            <field name="category_id" ref="category_code"/>
-            <field name="tool_type">odoo</field>
-            <field name="odoo_model">ir.model</field>
-            <field name="odoo_method">code_read</field>
-            <field name="is_readonly">True</field>
-            <field name="requires_confirm">False</field>
-            <field name="input_schema">{
-  "type": "object",
-  "properties": {
-    "filepath": {"type": "string", "description": "Relative path to file in project"},
-    "start_line": {"type": "integer", "description": "Start line (1-indexed)", "default": 1},
-    "end_line": {"type": "integer", "description": "End line (1-indexed)", "default": 100}
-  },
-  "required": ["filepath"]
-}</field>
-            <field name="output_sample">"class Partner(models.Model):\n    _inherit = 'res.partner'"</field>
-        </record>
-
-        <!-- ──────────────────────────────────────────────────────────────── -->
         <!-- ADVANCED / SANDBOX TOOLS                                         -->
         <!-- ──────────────────────────────────────────────────────────────── -->
 
         <record id="tool_execute_orm" model="mcp.tool">
             <field name="name">execute_orm</field>
             <field name="display_name_label">Execute Backend Script (safe_eval)</field>
-            <field name="description">Execute a Python script in Odoo's safe_eval sandbox with full ORM access. Use for complex multi-step operations that no single tool covers: "run this script", "compute and update", "bulk operation", "custom logic". Has access to env, user, Command, json, datetime, requests.</field>
+            <field name="description">Execute a Python script in Odoo's safe_eval sandbox with full ORM access. Use for complex multi-step operations that no single tool covers. NEVER guess field names — call get_model_schema first if unsure which fields exist on a model; this tool bypasses the automatic field-name safety net the other write tools have, since you write the create()/write() calls yourself. NEVER write "import" or "from" statements — all modules are pre-loaded: base64, io, BytesIO, StringIO, xlrd, openpyxl, re, json, datetime, date, timedelta, math, itertools, defaultdict, Counter, print. Do NOT use python "with" statements (they are forbidden by Odoo safe_eval; write explicit assignments and close manually instead). IMPORTANT: Use "return" to expose results to the AI — print() output goes to server logs only and will NOT be visible in the response. To read a spreadsheet attachment use the built-in helper: read_excel(attachment_id) → list of row lists (handles .xls, .xlsx, AND .ods automatically). Note: attachment.datas is base64-encoded; attachment.raw is raw bytes — read_excel handles the decode internally. Valid ir.attachment fields: id, name, mimetype, file_size, datas, raw, url, res_model, res_id (datas_fname was removed in Odoo 13, do not use it).</field>
             <field name="category_id" ref="category_advanced"/>
             <field name="tool_type">odoo</field>
             <field name="odoo_model">ir.model</field>
@@ -297,17 +246,240 @@
             <field name="input_schema">{
   "type": "object",
   "properties": {
-    "code": {"type": "string", "description": "Python block to execute (expose env, user, Command)"}
+    "code": {"type": "string", "description": "Python block to execute. Pre-loaded: env, user, Command, base64, io, BytesIO, StringIO, xlrd, openpyxl, json, re, math, datetime, date, timedelta, defaultdict, Counter, print, read_excel(attachment_id). Never write import statements. Use return (not print) to expose data back to the AI."}
   },
   "required": ["code"]
 }</field>
             <field name="output_sample">{"result": 42}</field>
         </record>
 
+        <record id="tool_post_message" model="mcp.tool">
+            <field name="name">post_message</field>
+            <field name="display_name_label">Post Chatter Message</field>
+            <field name="description">Post a message or internal note to a record's chatter (mail.thread). Use when user says: "add a note to", "log a message on", "comment on", "send internal note to", "notify about", "leave a comment on". Parameters: model, record_id, body (text), message_type (comment=email to followers, internal=private note).</field>
+            <field name="category_id" ref="category_write"/>
+            <field name="tool_type">odoo</field>
+            <field name="odoo_method">post_message</field>
+            <field name="is_readonly">False</field>
+            <field name="requires_confirm">False</field>
+            <field name="input_schema">{
+  "type": "object",
+  "properties": {
+    "model": {"type": "string", "description": "Technical model name (e.g. \"sale.order\")"},
+    "record_id": {"type": "integer", "description": "ID of the record to post on"},
+    "body": {"type": "string", "description": "Message body (plain text or HTML)"},
+    "message_type": {"type": "string", "description": "comment (visible, sends email) or internal (private note)", "default": "comment"}
+  },
+  "required": ["model", "record_id", "body"]
+}</field>
+            <field name="output_sample">{"message_id": 42, "model": "sale.order", "record_id": 1}</field>
+        </record>
+
+        <record id="tool_get_attachments" model="mcp.tool">
+            <field name="name">get_attachments</field>
+            <field name="display_name_label">Get Attachments</field>
+            <field name="description">List files and images attached to a record. Use when user says: "show attachments on", "what files are on", "get documents for", "list images attached to". Returns file names, types, sizes, and download URLs. Parameters: model, record_id.</field>
+            <field name="category_id" ref="category_read"/>
+            <field name="tool_type">odoo</field>
+            <field name="odoo_method">get_attachments</field>
+            <field name="is_readonly">True</field>
+            <field name="requires_confirm">False</field>
+            <field name="input_schema">{
+  "type": "object",
+  "properties": {
+    "model": {"type": "string", "description": "Odoo model name (e.g. sale.order)"},
+    "record_id": {"type": "integer", "description": "Record ID"}
+  },
+  "required": ["model", "record_id"]
+}</field>
+            <field name="output_sample">{"count": 2, "attachments": [{"id": 1, "name": "invoice.pdf", "mimetype": "application/pdf"}]}</field>
+        </record>
+
+        <record id="tool_read_attachment" model="mcp.tool">
+            <field name="name">read_attachment</field>
+            <field name="display_name_label">Read Attachment Content</field>
+            <field name="description">Read the content of a specific attachment by ID. Use when user says: "read the file", "show the content of", "what's in this document", "open attachment". Returns metadata + base64 content if under 1MB. Get the attachment_id first from get_attachments. Parameters: attachment_id, include_data (default true).</field>
+            <field name="category_id" ref="category_read"/>
+            <field name="tool_type">odoo</field>
+            <field name="odoo_method">read_attachment</field>
+            <field name="is_readonly">True</field>
+            <field name="requires_confirm">False</field>
+            <field name="input_schema">{
+  "type": "object",
+  "properties": {
+    "attachment_id": {"type": "integer", "description": "ID of the ir.attachment record"},
+    "include_data": {"type": "boolean", "description": "Include base64 content (default true, capped at 1MB)"}
+  },
+  "required": ["attachment_id"]
+}</field>
+            <field name="output_sample">{"attachment": {"name": "invoice.pdf", "mimetype": "application/pdf"}, "data_included": false, "warnings": ["File is 2MB, over 1MB cap. Use the URL to download."]}</field>
+        </record>
+
+        <record id="tool_upload_attachment" model="mcp.tool">
+            <field name="name">upload_attachment</field>
+            <field name="display_name_label">Upload Attachment</field>
+            <field name="description">Attach a file (base64 encoded) to a record. Use when user says: "attach file to", "upload document to", "add attachment to". Parameters: model, record_id, filename, mimetype, datas (base64 string).</field>
+            <field name="category_id" ref="category_write"/>
+            <field name="tool_type">odoo</field>
+            <field name="odoo_method">upload_attachment</field>
+            <field name="is_readonly">False</field>
+            <field name="requires_confirm">False</field>
+            <field name="input_schema">{
+  "type": "object",
+  "properties": {
+    "model": {"type": "string"},
+    "record_id": {"type": "integer"},
+    "filename": {"type": "string"},
+    "mimetype": {"type": "string", "description": "MIME type (default: application/octet-stream)"},
+    "datas": {"type": "string", "description": "Base64-encoded file content"}
+  },
+  "required": ["model", "record_id", "filename", "datas"]
+}</field>
+            <field name="output_sample">{"id": 1, "name": "report.pdf", "model": "sale.order", "record_id": 5}</field>
+        </record>
+
+        <record id="tool_set_binary_field" model="mcp.tool">
+            <field name="name">set_binary_field</field>
+            <field name="display_name_label">Set Image/Binary Field</field>
+            <field name="description">Write an image or binary field on a record by fetching bytes from a URL. Use when user says: "set product image from URL", "update avatar from", "set logo to", "upload image to field". avatar_128/256/512/1024/1920 all auto-redirect to image_1920. Parameters: model, record_id, field_name (e.g. image_1920), source (http/https URL).</field>
+            <field name="category_id" ref="category_write"/>
+            <field name="tool_type">odoo</field>
+            <field name="odoo_method">set_binary_field</field>
+            <field name="is_readonly">False</field>
+            <field name="requires_confirm">False</field>
+            <field name="input_schema">{
+  "type": "object",
+  "properties": {
+    "model": {"type": "string", "description": "Odoo model (e.g. product.template)"},
+    "record_id": {"type": "integer"},
+    "field_name": {"type": "string", "description": "Binary/image field name (e.g. image_1920, logo)"},
+    "source": {"type": "string", "description": "http/https URL to fetch the file from"}
+  },
+  "required": ["model", "record_id", "field_name", "source"]
+}</field>
+            <field name="output_sample">{"model": "product.template", "record_id": 1, "field": "image_1920", "size_bytes": 45000}</field>
+        </record>
+
+        <record id="tool_create_records" model="mcp.tool">
+            <field name="name">create_records</field>
+            <field name="display_name_label">Bulk Create Records</field>
+            <field name="description">Create multiple records in a single operation (max 1000). Use when user says: "create multiple", "bulk create", "add these N records", "import a list of". More efficient than calling create_record N times. NEVER guess field names — call get_model_schema first. Use match_field to prevent duplicates: all rows are checked in ONE database query, existing records are skipped, only new ones are created (e.g. match_field="default_code" for products).</field>
+            <field name="category_id" ref="category_write"/>
+            <field name="tool_type">odoo</field>
+            <field name="odoo_method">create_records</field>
+            <field name="is_readonly">False</field>
+            <field name="requires_confirm">False</field>
+            <field name="input_schema">{
+  "type": "object",
+  "properties": {
+    "model": {"type": "string"},
+    "vals_list": {"type": "array", "items": {"type": "object"}, "description": "Array of value dicts, one per record"},
+    "match_field": {"type": "string", "description": "Optional field to deduplicate on. All match values are checked in one DB query. Existing records are skipped, new ones are created."}
+  },
+  "required": ["model", "vals_list"]
+}</field>
+            <field name="output_sample">{"model": "res.partner", "ids": [10, 11, 12], "count": 3, "skipped_ids": [], "skipped_count": 0}</field>
+        </record>
+
+        <record id="tool_update_records" model="mcp.tool">
+            <field name="name">update_records</field>
+            <field name="display_name_label">Bulk Update Records</field>
+            <field name="description">Update multiple records with the same values in a single operation (max 1000). Use when user says: "update all", "set field X on these records", "bulk update", "change status of all". NEVER guess field names — call get_model_schema first if unsure. Parameters: model, record_ids (array of IDs), values (dict of field→value).</field>
+            <field name="category_id" ref="category_write"/>
+            <field name="tool_type">odoo</field>
+            <field name="odoo_method">update_records</field>
+            <field name="is_readonly">False</field>
+            <field name="requires_confirm">False</field>
+            <field name="input_schema">{
+  "type": "object",
+  "properties": {
+    "model": {"type": "string"},
+    "record_ids": {"type": "array", "items": {"type": "integer"}},
+    "values": {"type": "object", "description": "Field values to write to all records"}
+  },
+  "required": ["model", "record_ids", "values"]
+}</field>
+            <field name="output_sample">{"model": "sale.order", "record_ids": [1, 2, 3], "count": 3}</field>
+        </record>
+
+        <record id="tool_delete_records" model="mcp.tool">
+            <field name="name">delete_records</field>
+            <field name="display_name_label">Bulk Delete Records</field>
+            <field name="description">Delete multiple records in a single operation (max 1000). Use when user says: "delete all", "remove these records", "bulk delete", "clean up all X". Parameters: model, record_ids (array of IDs).</field>
+            <field name="category_id" ref="category_write"/>
+            <field name="tool_type">odoo</field>
+            <field name="odoo_method">delete_records</field>
+            <field name="is_readonly">False</field>
+            <field name="requires_confirm">True</field>
+            <field name="input_schema">{
+  "type": "object",
+  "properties": {
+    "model": {"type": "string"},
+    "record_ids": {"type": "array", "items": {"type": "integer"}}
+  },
+  "required": ["model", "record_ids"]
+}</field>
+            <field name="output_sample">{"model": "res.partner", "count": 5}</field>
+        </record>
+
+        <record id="tool_lookup_model_history" model="mcp.tool">
+            <field name="name">lookup_model_history</field>
+            <field name="display_name_label">Look Up Model Name History</field>
+            <field name="description">Resolve an outdated Odoo model name to its current name. Use when a tool call fails with "model not found", or before using known-renamed models: account.invoice→account.move, hr.holidays→hr.leave, crm.case.categ→crm.tag. Returns current name and rename status. Parameters: model.</field>
+            <field name="category_id" ref="category_read"/>
+            <field name="tool_type">odoo</field>
+            <field name="odoo_method">lookup_model_history</field>
+            <field name="is_readonly">True</field>
+            <field name="requires_confirm">False</field>
+            <field name="input_schema">{
+  "type": "object",
+  "properties": {
+    "model": {"type": "string", "description": "Model name to check (e.g. account.invoice)"}
+  },
+  "required": ["model"]
+}</field>
+            <field name="output_sample">{"queried": "account.invoice", "current_name": "account.move", "renamed": true, "note": "Use account.move instead of account.invoice"}</field>
+        </record>
+
+        <record id="tool_accounting_health_summary" model="mcp.tool">
+            <field name="name">accounting_health_summary</field>
+            <field name="display_name_label">Accounting Health Summary</field>
+            <field name="description">Quick AR/AP health check — open invoices, overdue amounts, draft backlog. Use when user says: "what's our AR situation", "how many unpaid invoices", "overdue bills", "accounting overview", "cash flow situation", "how much do customers owe us". No parameters needed.</field>
+            <field name="category_id" ref="category_read"/>
+            <field name="tool_type">odoo</field>
+            <field name="odoo_method">accounting_health_summary</field>
+            <field name="is_readonly">True</field>
+            <field name="requires_confirm">False</field>
+            <field name="input_schema">{"type": "object", "properties": {}}</field>
+            <field name="output_sample">{"receivables": {"total_count": 12, "overdue_count": 3, "total_amount": 45000.0, "overdue_amount": 8500.0}, "payables": {"total_count": 5, "overdue_count": 1, "total_amount": 12000.0, "overdue_amount": 2000.0}, "draft_invoice_backlog": 4}</field>
+        </record>
+
+        <record id="tool_import_from_file" model="mcp.tool">
+            <field name="name">import_from_file</field>
+            <field name="display_name_label">Import Records from File</field>
+            <field name="description">Import records from a CSV or Excel file that was uploaded via the paperclip button. Use when user uploads a file and says: "import this", "create records from this file", "load products from Excel", "bulk import from spreadsheet". The file must be uploaded first (use the paperclip). IMPORTANT: Call get_model_schema first to verify field names. Always use match_field to prevent duplicates — e.g. match_field="default_code" for products, match_field="email" for contacts. Rows matching an existing record are skipped; only new rows are imported.</field>
+            <field name="category_id" ref="category_write"/>
+            <field name="tool_type">odoo</field>
+            <field name="odoo_method">import_from_file</field>
+            <field name="is_readonly">False</field>
+            <field name="requires_confirm">True</field>
+            <field name="input_schema">{
+  "type": "object",
+  "properties": {
+    "attachment_id": {"type": "integer", "description": "ID of the staged ir.attachment (from the uploaded file)"},
+    "model": {"type": "string", "description": "Odoo model to import into (e.g. res.partner, product.template)"},
+    "has_header": {"type": "boolean", "description": "Whether first row is field names (default: true)", "default": true},
+    "match_field": {"type": "string", "description": "Field to deduplicate on (e.g. 'default_code' for products, 'email' for contacts). Rows where a record with this value already exists are skipped."}
+  },
+  "required": ["attachment_id", "model"]
+}</field>
+            <field name="output_sample">{"model": "res.partner", "source_file": "contacts.xlsx", "fields": ["name", "email", "phone"], "total_rows": 50, "created_count": 48, "skipped_count": 2, "ids": [1, 2, 3], "errors": []}</field>
+        </record>
+
         <record id="tool_create_echart" model="mcp.tool">
             <field name="name">create_echart</field>
             <field name="display_name_label">Create EChart Dashboard Widget</field>
-            <field name="description">Create and save an Apache ECharts visualization. Use when user asks: "create a chart", "visualize", "plot", "show me a graph". SINGLE tool call — do NOT call read_group separately first. Write data_code Python using ECharts dataset format: query ORM inside data_code, build source as list-of-lists (first row = headers), return complete options dict. BAR/LINE: result=env['sale.order'].read_group(domain=[['date_order','&gt;=','2026-06-01'],['state','not in',['cancel']]],fields=['amount_total:sum'],groupby=['date_order:day']); source=[['Date','Sales']]+[[str(r.get('date_order:day','')),r.get('amount_total',0)] for r in result]; return {'title':{'text':'June Sales'},'dataset':{'source':source},'xAxis':{'type':'category'},'yAxis':{'type':'value'},'series':[{'type':'bar','name':'Sales'}]}. PIE: result=env['sale.order'].read_group(domain=[],fields=['amount_total:sum'],groupby=['partner_id']); source=[['Customer','Amount']]+[[r['partner_id'][1],r.get('amount_total',0)] for r in result if r.get('partner_id')]; return {'title':{'text':'By Customer'},'dataset':{'source':source},'series':[{'type':'pie','radius':'60%','encode':{'itemName':'Customer','value':'Amount'}}]}. RULES: always use dataset.source, never xAxis.data or series.data, data_code must end with return dict.</field>
+            <field name="description">Create and save an Apache ECharts visualization. Use when user asks: "create a chart", "visualize", "plot", "show me a graph". SINGLE tool call — do NOT call read_group separately first. Write data_code Python using ECharts dataset format: query ORM inside data_code, build source as list-of-lists (first row = headers), return complete options dict. BAR/LINE: result=env['sale.order'].read_group(domain=[['date_order','&gt;=','2026-06-01'],['state','not in',['cancel']]],fields=['amount_total:sum'],groupby=['date_order:day']); source=[['Date','Sales']]+[[str(r.get('date_order:day','')),r.get('amount_total',0)] for r in result]; return {'title':{'text':'June Sales'},'dataset':{'source':source},'xAxis':{'type':'category'},'yAxis':{'type':'value'},'series':[{'type':'bar','name':'Sales'}]}. STACKED/AREA BAR: same as BAR but add 'stack':'total' to each series for stacked, or 'areaStyle':{} for a filled area. PIE: result=env['sale.order'].read_group(domain=[],fields=['amount_total:sum'],groupby=['partner_id']); source=[['Customer','Amount']]+[[r['partner_id'][1],r.get('amount_total',0)] for r in result if r.get('partner_id')]; return {'title':{'text':'By Customer'},'dataset':{'source':source},'series':[{'type':'pie','radius':'60%','encode':{'itemName':'Customer','value':'Amount'}}]}. DONUT: identical to PIE but 'radius':['40%','70%'] (inner+outer) instead of a single radius. SCATTER: source=[['X','Y']]+[[row_x,row_y] for row in result]; return {'dataset':{'source':source},'xAxis':{'type':'value'},'yAxis':{'type':'value'},'series':[{'type':'scatter'}]}. HEATMAP: source rows are [xCategory,yCategory,value] triplets; return {'dataset':{'source':source},'xAxis':{'type':'category'},'yAxis':{'type':'category'},'series':[{'type':'heatmap','encode':{'x':0,'y':1,'value':2}}]}. FUNNEL: same encode shape as PIE, 'series':[{'type':'funnel','encode':{'itemName':'Customer','value':'Amount'}}]. EXCEPTIONS (only these two do NOT use dataset.source, ECharts requires explicit data arrays): RADAR needs {'radar':{'indicator':[{'name':...,'max':...},...]},'series':[{'type':'radar','data':[{'value':[...],'name':...}]}]}. GAUGE is single-value: {'series':[{'type':'gauge','data':[{'value':72,'name':'Score'}]}]}. RULES: always use dataset.source except for RADAR/GAUGE above, never xAxis.data or series.data otherwise, data_code must end with return dict. TO EDIT AN EXISTING CHART (recolor, restyle, change its data) — do NOT call create_echart again, that always creates a duplicate record. Instead call read_record on mcp.echart with the chart's id to get its current options, modify the JSON, then call update_record on mcp.echart with that same id and the new options (or data_code) value.</field>
             <field name="category_id" ref="category_advanced"/>
             <field name="tool_type">odoo</field>
             <field name="odoo_model">ir.model</field>
@@ -323,6 +495,29 @@
   "required": ["name", "data_code"]
 }</field>
             <field name="output_sample">{"id": 1, "name": "June Sales"}</field>
+        </record>
+
+        <record id="tool_generate_export_file" model="mcp.tool">
+            <field name="name">generate_export_file</field>
+            <field name="display_name_label">Generate Export File (PDF/XLSX/CSV)</field>
+            <field name="description">Generate a downloadable PDF, XLSX, or CSV file from Odoo data. Use when the user asks to "export", "download as excel/csv/pdf", "give me a file", or "generate a report". SINGLE tool call. Write data_code Python that queries the ORM and returns rows as a list of lists — FIRST row is the header, every other row is data, all cells must be strings/numbers (not dicts or records). Do NOT build a workbook, csv writer, or PDF yourself — that always fails (safe_eval blocks object attribute assignment entirely, and library bindings here are read-only). Example: result=env['sale.order'].search_read(domain=[],fields=['name','partner_id','amount_total']); rows=[['Order','Customer','Total']]; rows+=[[r['name'], r['partner_id'][1] if r['partner_id'] else '', r['amount_total']] for r in result]; return rows. The download card is shown to the user automatically as soon as this tool succeeds — do not call any other tool afterward for the same request, and do not describe the file's contents yourself.</field>
+            <field name="category_id" ref="category_advanced"/>
+            <field name="tool_type">odoo</field>
+            <field name="odoo_model">ir.model</field>
+            <field name="odoo_method">generate_export_file</field>
+            <field name="is_readonly">False</field>
+            <field name="requires_confirm">False</field>
+            <field name="input_schema">{
+  "type": "object",
+  "properties": {
+    "format": {"type": "string", "enum": ["csv", "xlsx", "pdf"], "description": "Output file format"},
+    "title": {"type": "string", "description": "Report title (shown as the PDF heading; also used to derive the filename if filename is omitted)"},
+    "filename": {"type": "string", "description": "Optional filename without extension — the correct extension is appended automatically"},
+    "data_code": {"type": "string", "description": "Python script with Odoo ORM access (env, user available). Must end with: return [[header1, header2, ...], [row1col1, row1col2, ...], ...] — a plain list of rows, header row first."}
+  },
+  "required": ["format", "data_code"]
+}</field>
+            <field name="output_sample">{"id": 5, "url": "/web/content/5?download=true", "filename": "sales_report.xlsx", "mimetype": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "size_bytes": 6482}</field>
         </record>
 
         <record id="tool_ai_agent_query" model="mcp.tool">

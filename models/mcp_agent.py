@@ -31,6 +31,152 @@ from odoo.exceptions import UserError
 _logger = logging.getLogger(__name__)
 
 
+PREMADE_AVATARS = {
+    'generic': b64encode(b'''<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+  <defs>
+    <linearGradient id="grad_gen" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#714B67;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#4e3447;stop-opacity:1" />
+    </linearGradient>
+  </defs>
+  <rect width="100" height="100" rx="20" fill="url(#grad_gen)"/>
+  <rect x="28" y="28" width="44" height="44" rx="8" fill="none" stroke="#FFFFFF" stroke-width="5"/>
+  <circle cx="42" cy="45" r="4" fill="#FFFFFF"/>
+  <circle cx="58" cy="45" r="4" fill="#FFFFFF"/>
+  <rect x="44" y="58" width="12" height="4" rx="1" fill="#FFFFFF"/>
+  <rect x="47" y="16" width="6" height="12" fill="#FFFFFF"/>
+  <circle cx="50" cy="16" r="4" fill="#FFFFFF"/>
+</svg>'''),
+    'sales': b64encode(b'''<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+  <defs>
+    <linearGradient id="grad_sales" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#ea00d9;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#711c91;stop-opacity:1" />
+    </linearGradient>
+  </defs>
+  <rect width="100" height="100" rx="20" fill="url(#grad_sales)"/>
+  <path d="M30,70 L48,45 L62,55 L74,30" stroke="#FFFFFF" stroke-width="6" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="74" cy="30" r="4" fill="#FFFFFF"/>
+</svg>'''),
+    'accounting': b64encode(b'''<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+  <defs>
+    <linearGradient id="grad_acc" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#00F260;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#0575E6;stop-opacity:1" />
+    </linearGradient>
+  </defs>
+  <rect width="100" height="100" rx="20" fill="url(#grad_acc)"/>
+  <rect x="25" y="20" width="50" height="60" rx="5" fill="none" stroke="#FFFFFF" stroke-width="5"/>
+  <line x1="35" y1="35" x2="65" y2="35" stroke="#FFFFFF" stroke-width="5" stroke-linecap="round"/>
+  <line x1="35" y1="50" x2="65" y2="50" stroke="#FFFFFF" stroke-width="5" stroke-linecap="round"/>
+  <line x1="35" y1="65" x2="55" y2="65" stroke="#FFFFFF" stroke-width="5" stroke-linecap="round"/>
+</svg>'''),
+    'inventory': b64encode(b'''<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+  <defs>
+    <linearGradient id="grad_inv" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#f857a6;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#ff5858;stop-opacity:1" />
+    </linearGradient>
+  </defs>
+  <rect width="100" height="100" rx="20" fill="url(#grad_inv)"/>
+  <path d="M50,20 L78,34 L78,66 L50,80 L22,66 L22,34 Z" fill="none" stroke="#FFFFFF" stroke-width="5" stroke-linejoin="round"/>
+  <path d="M50,20 L50,80 M22,34 L50,48 L78,34" stroke="#FFFFFF" stroke-width="4" fill="none"/>
+</svg>'''),
+    'developer': b64encode(b'''<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+  <defs>
+    <linearGradient id="grad_dev" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#232526;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#414345;stop-opacity:1" />
+    </linearGradient>
+  </defs>
+  <rect width="100" height="100" rx="20" fill="url(#grad_dev)"/>
+  <path d="M35,35 L20,50 L35,65" stroke="#FFFFFF" stroke-width="6" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M65,35 L80,50 L65,65" stroke="#FFFFFF" stroke-width="6" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+  <line x1="55" y1="30" x2="45" y2="70" stroke="#FFFFFF" stroke-width="6" stroke-linecap="round"/>
+</svg>'''),
+    'support': b64encode(b'''<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+  <defs>
+    <linearGradient id="grad_sup" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#e65c00;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#F9D423;stop-opacity:1" />
+    </linearGradient>
+  </defs>
+  <rect width="100" height="100" rx="20" fill="url(#grad_sup)"/>
+  <circle cx="50" cy="50" r="30" fill="none" stroke="#FFFFFF" stroke-width="5"/>
+  <path d="M32,55 C32,35 68,35 68,55" stroke="#FFFFFF" stroke-width="5" fill="none" stroke-linecap="round"/>
+  <rect x="25" y="50" width="8" height="12" rx="2" fill="#FFFFFF"/>
+  <rect x="67" y="50" width="8" height="12" rx="2" fill="#FFFFFF"/>
+</svg>'''),
+    'brain': b64encode(b'''<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+  <defs>
+    <linearGradient id="grad_brain" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#8E2DE2;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#4A00E0;stop-opacity:1" />
+    </linearGradient>
+  </defs>
+  <rect width="100" height="100" rx="20" fill="url(#grad_brain)"/>
+  <path d="M48,30 C35,30 30,40 30,52 C30,64 38,72 48,72 C48,72 48,67 48,62 M52,30 C65,30 70,40 70,52 C70,64 62,72 52,72 C52,72 52,67 52,62" fill="none" stroke="#FFFFFF" stroke-width="4" stroke-linecap="round"/>
+  <circle cx="48" cy="40" r="3" fill="#FFFFFF"/>
+  <circle cx="52" cy="40" r="3" fill="#FFFFFF"/>
+  <circle cx="38" cy="52" r="3" fill="#FFFFFF"/>
+  <circle cx="62" cy="52" r="3" fill="#FFFFFF"/>
+  <circle cx="48" cy="64" r="3" fill="#FFFFFF"/>
+  <circle cx="52" cy="64" r="3" fill="#FFFFFF"/>
+  <path d="M48,40 L38,52 L48,64 M52,40 L62,52 L52,64" fill="none" stroke="#FFFFFF" stroke-width="2" opacity="0.6"/>
+</svg>'''),
+    'rocket': b64encode(b'''<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+  <defs>
+    <linearGradient id="grad_rocket" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#FF416C;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#FF4B2B;stop-opacity:1" />
+    </linearGradient>
+  </defs>
+  <rect width="100" height="100" rx="20" fill="url(#grad_rocket)"/>
+  <path d="M50,22 C56,35 64,45 64,62 L36,62 C36,45 44,35 50,22 Z" fill="#FFFFFF"/>
+  <circle cx="50" cy="45" r="4" fill="#FF416C"/>
+  <path d="M36,52 L24,66 L36,62 Z" fill="#FFFFFF"/>
+  <path d="M64,52 L76,66 L64,62 Z" fill="#FFFFFF"/>
+  <path d="M46,66 L50,82 L54,66 Z" fill="#FFDE00"/>
+</svg>'''),
+    'wizard': b64encode(b'''<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+  <defs>
+    <linearGradient id="grad_wiz" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#00c6ff;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#0072ff;stop-opacity:1" />
+    </linearGradient>
+  </defs>
+  <rect width="100" height="100" rx="20" fill="url(#grad_wiz)"/>
+  <path d="M30,70 L65,35 L70,40 L35,75 Z" fill="#FFFFFF"/>
+  <rect x="63" y="32" width="10" height="10" rx="2" transform="rotate(45 68 37)" fill="#FFD700"/>
+  <polygon points="50,25 52,30 57,30 53,33 55,38 50,35 45,38 47,33 43,30 48,30" fill="#FFFFFF"/>
+  <polygon points="75,50 76.5,53.5 80,53.5 77,55.5 78.5,59 75,57 71.5,59 73,55.5 70,53.5 73.5,53.5" fill="#FFFFFF"/>
+  <circle cx="45" cy="40" r="2" fill="#FFFFFF"/>
+  <circle cx="60" cy="55" r="2" fill="#FFFFFF"/>
+</svg>'''),
+    'lightning': b64encode(b'''<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+  <defs>
+    <linearGradient id="grad_light" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#F2994A;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#F2C94C;stop-opacity:1" />
+    </linearGradient>
+  </defs>
+  <rect width="100" height="100" rx="20" fill="url(#grad_light)"/>
+  <polygon points="56,20 28,52 48,52 44,80 72,48 52,48" fill="#FFFFFF"/>
+</svg>'''),
+    'shield': b64encode(b'''<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+  <defs>
+    <linearGradient id="grad_shd" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#11998e;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#38ef7d;stop-opacity:1" />
+    </linearGradient>
+  </defs>
+  <rect width="100" height="100" rx="20" fill="url(#grad_shd)"/>
+  <path d="M30,26 L50,18 L70,26 L70,50 C70,66 50,80 50,80 C50,80 30,66 30,50 Z" fill="#FFFFFF"/>
+  <path d="M42,48 L48,54 L58,38" stroke="#11998e" stroke-width="6" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>'''),
+}
+
+
 class Agent(models.Model):
     """
     AI Agent Profile (mcp.agent)
@@ -95,10 +241,34 @@ class Agent(models.Model):
         default=0,
         help=_('Kanban color (0-11) for visual grouping'),
     )
+    premade_avatar = fields.Selection(
+        [
+            ('custom', _('Custom Upload')),
+            ('generic', _('Generic AI (Robot)')),
+            ('sales', _('Sales Assistant')),
+            ('accounting', _('Accounting Assistant')),
+            ('inventory', _('Inventory Assistant')),
+            ('developer', _('Developer Assistant')),
+            ('support', _('Support Assistant')),
+            ('brain', _('Neural AI (Brain)')),
+            ('rocket', _('Speed Optimizer (Rocket)')),
+            ('wizard', _('Automation Wizard')),
+            ('lightning', _('Fast Bolt')),
+            ('shield', _('Security Shield')),
+        ],
+        string=_('Preset Avatar'),
+        default='custom',
+        help=_('Choose a preset icon or upload your custom one'),
+    )
     avatar = fields.Binary(
         string=_('Avatar'),
         help=_('Profile image for agent'),
     )
+
+    @api.onchange('premade_avatar')
+    def _onchange_premade_avatar(self):
+        if self.premade_avatar and self.premade_avatar != 'custom':
+            self.avatar = PREMADE_AVATARS.get(self.premade_avatar)
 
     # ── Provider & Model Configuration ──────────────────────────────
     provider = fields.Selection(
@@ -107,7 +277,7 @@ class Agent(models.Model):
             ('openai', 'OpenAI'),
             ('gemini', 'Google Gemini'),
             ('ollama', 'Ollama (local)'),
-            ('minimax', 'MiniMax'),
+            ('grok', 'Grok (xAI)'),
             ('opencode', 'OpenCode AI'),
         ],
         string=_('Provider'),
@@ -121,10 +291,11 @@ class Agent(models.Model):
         required=True,
         help=_('Enter model name manually or use the dropdown below.'),
     )
-    model_selection = fields.Selection(
+    model_selection = fields.Many2one(
+        'mcp.model.option',
         string=_('Available Models'),
-        selection='_get_model_selection_options',
-        help=_('Select from available models. Updates when you change provider or API key.'),
+        domain="[('provider', '=', provider)]",
+        help=_('Select from available models for this provider. Use Refresh Models to fetch latest from API.'),
     )
     api_key = fields.Char(
         string=_('API Key'),
@@ -279,13 +450,13 @@ class Agent(models.Model):
             'openai': 'gpt-4o',
             'gemini': 'gemini-2.0-flash',
             'ollama': 'llama3.1',
-            'minimax': 'abab6.5s-chat',
+            'grok': 'grok-3-mini',
             'opencode': 'minimax-m2.5-free',
         }
         if self.provider in defaults:
             self.model_name = defaults[self.provider]
 
-        # Clear model_selection when provider changes
+        # Clear model_selection when provider changes (old provider's record is invalid)
         self.model_selection = False
 
         # Try to fetch available models if API key is present
@@ -297,9 +468,8 @@ class Agent(models.Model):
                     models = provider_obj.get_available_models(self)
                     _logger.info('_onchange_provider: got models %s', models)
                     if models:
-                        # Build selection from API models
-                        self.model_selection = models[0] if models else False
-                        self.model_name = models[0] if models else self.model_name
+                        self.model_name = models[0]
+                        self.model_selection = self._ensure_model_option(self.provider, models[0])
             except Exception as e:
                 _logger.warning('_onchange_provider: failed to fetch models: %s', e)
 
@@ -316,69 +486,31 @@ class Agent(models.Model):
                     models = provider_obj.get_available_models(self)
                     _logger.info('_onchange_api_key: got models %s', models)
                     if models:
-                        self.model_selection = models[0]
                         self.model_name = models[0]
+                        self.model_selection = self._ensure_model_option(self.provider, models[0])
             except Exception as e:
                 _logger.warning('_onchange_api_key: failed to fetch models: %s', e)
 
+    def _ensure_model_option(self, provider, model_name):
+        """Find the mcp.model.option matching a live-fetched model, creating one
+        (is_discovered=True) if the model isn't in the pre-seeded list yet — keeps
+        the model_selection dropdown in sync with model_name instead of silently
+        going empty for newly-released models the seed data doesn't know about yet."""
+        rec = self.env['mcp.model.option'].search(
+            [('provider', '=', provider), ('name', '=', model_name)], limit=1
+        )
+        if not rec:
+            rec = self.env['mcp.model.option'].create({
+                'provider': provider,
+                'name': model_name,
+                'is_discovered': True,
+            })
+        return rec
+
     @api.onchange('model_selection')
     def _onchange_model_selection(self):
-        """
-        Sync model_selection to model_name when user picks from dropdown.
-        """
         if self.model_selection:
-            self.model_name = self.model_selection
-
-    @api.model
-    def _get_model_selection_options(self):
-        """
-        Get available models for dropdown - ALL models combined.
-
-        Since selection method can't access current record context (no @api.one),
-        returns all models from all providers. Users can search/filter in dropdown.
-
-        Returns:
-            list: List of (value, label) tuples for selection
-        """
-        _logger.info('_get_model_selection_options called')
-        all_models = [
-            # Anthropic
-            'claude-opus-4-7', 'claude-sonnet-4-6', 'claude-haiku-4-5',
-            # OpenAI
-            'gpt-4o', 'gpt-4o-mini', 'gpt-4-turbo', 'o1-preview', 'o1-mini',
-            # Gemini
-            'gemini-2.0-flash', 'gemini-1.5-pro', 'gemini-1.5-flash',
-            # Ollama
-            'llama3.1', 'llama3', 'mistral', 'codellama',
-            # MiniMax
-            'abab6.5s-chat', 'abab6.5g-chat', 'abab5.5s-chat',
-            # OpenCode Zen models (https://opencode.ai/zen)
-            # Free models
-            'minimax-m2.5-free', 'deepseek-v4-flash-free', 'big-pickle',
-            'ring-2.6-1t-free', 'nemotron-3-super-free',
-            # MiniMax
-            'minimax-m2.7', 'minimax-m2.5',
-            # Qwen
-            'qwen3.6-plus', 'qwen3.5-plus',
-            # GLM
-            'glm-5.1', 'glm-5',
-            # Kimi
-            'kimi-k2.6', 'kimi-k2.5',
-            # GPT 5.x series (via OpenCode Zen /v1/responses)
-            'gpt-5.5', 'gpt-5.5-pro', 'gpt-5.4', 'gpt-5.4-pro',
-            'gpt-5.4-mini', 'gpt-5.4-nano', 'gpt-5.3-codex',
-            'gpt-5.3-codex-spark', 'gpt-5.2', 'gpt-5.2-codex',
-            'gpt-5.1', 'gpt-5.1-codex', 'gpt-5.1-codex-max',
-            'gpt-5.1-codex-mini', 'gpt-5', 'gpt-5-codex', 'gpt-5-nano',
-            # Claude via OpenCode Zen (/v1/messages)
-            'claude-opus-4-6', 'claude-opus-4-5', 'claude-opus-4-1',
-            'claude-sonnet-4-5', 'claude-sonnet-4', 'claude-3-5-haiku',
-            # Gemini via OpenCode Zen
-            'gemini-3.1-pro', 'gemini-3-flash',
-        ]
-        result = [(m, m) for m in sorted(set(all_models))]
-        _logger.info('_get_model_selection_options returning %d models', len(result))
-        return result
+            self.model_name = self.model_selection.name
 
     @api.constrains('temperature')
     def _check_temperature(self):
@@ -463,7 +595,7 @@ class Agent(models.Model):
             - Safe to call multiple times (returns same key)
         """
         param_key = 'mcp_gateway.fernet_key'
-        stored_key = self.env['ir.config_parameter'].get_param(param_key)
+        stored_key = self.env['ir.config_parameter'].sudo().get_param(param_key)
 
         if stored_key:
             try:
@@ -474,7 +606,7 @@ class Agent(models.Model):
 
         # Auto-generate new key
         new_key = Fernet.generate_key()
-        self.env['ir.config_parameter'].set_param(param_key, b64encode(new_key).decode())
+        self.env['ir.config_parameter'].sudo().set_param(param_key, b64encode(new_key).decode())
         _logger.info('Generated new Fernet key for API key encryption')
         return new_key
 
@@ -558,20 +690,21 @@ class Agent(models.Model):
             - Result should never be stored, logged, or transmitted
             - If Fernet key is lost, all stored API keys become unrecoverable
         """
-        if not self.api_key:
+        api_key = self.sudo().api_key
+        if not api_key:
             _logger.warning('No API key set for agent %s', getattr(self, 'id', 'New'))
             return ''
 
         # If it doesn't start with the Fernet magic string, it's likely a plaintext
         # key from an onchange event in the UI before it has been saved/encrypted.
-        if not self.api_key.startswith('gAAAAAB'):
+        if not api_key.startswith('gAAAAAB'):
             _logger.info('API key does not appear to be encrypted. Assuming plaintext (e.g. from onchange).')
-            return self.api_key
+            return api_key
 
         try:
             key = self._get_fernet_key()
             cipher_suite = Fernet(key)
-            plaintext = cipher_suite.decrypt(self.api_key.encode())
+            plaintext = cipher_suite.decrypt(api_key.encode())
             decrypted = plaintext.decode()
             _logger.info('API key decrypted successfully for agent %s', getattr(self, 'id', 'New'))
             return decrypted
@@ -605,7 +738,7 @@ class Agent(models.Model):
         from ..mcp.providers.openai import OpenAIAdapter
         from ..mcp.providers.gemini import GeminiAdapter
         from ..mcp.providers.ollama import OllamaAdapter
-        from ..mcp.providers.minimax import MiniMaxAdapter
+        from ..mcp.providers.grok import GrokAdapter
         from ..mcp.providers.opencode import OpenCodeAdapter
 
         provider_map = {
@@ -613,7 +746,7 @@ class Agent(models.Model):
             'openai': OpenAIAdapter,
             'gemini': GeminiAdapter,
             'ollama': OllamaAdapter,
-            'minimax': MiniMaxAdapter,
+            'grok': GrokAdapter,
             'opencode': OpenCodeAdapter,
         }
 
@@ -660,6 +793,11 @@ class Agent(models.Model):
         """
         Compute union of tools from tool sets and direct tools.
 
+        If neither is set, defaults to every active tool — same "empty means
+        allow all" convention used by mcp.access.rule's tool_ids, so a newly
+        created agent isn't silently toolless until someone remembers to
+        assign a Tool Set.
+
         Returns:
             None — sets effective_tool_ids field (computed, not stored)
         """
@@ -667,6 +805,8 @@ class Agent(models.Model):
             tools = agent.tool_ids
             for tool_set in agent.tool_set_ids:
                 tools = tools | tool_set.tool_ids
+            if not agent.tool_ids and not agent.tool_set_ids:
+                tools = self.env['mcp.tool'].search([('active', '=', True)])
             agent.effective_tool_ids = tools
 
     @api.depends('provider', 'api_key')
@@ -684,7 +824,7 @@ class Agent(models.Model):
             if agent.provider == 'ollama':
                 # Ollama doesn't need API key
                 agent.status = 'online'
-            elif agent.api_key:
+            elif agent.sudo().api_key:
                 agent.status = 'online'
             else:
                 agent.status = 'unconfigured'
@@ -731,6 +871,8 @@ class Agent(models.Model):
             _logger.info('Got models: %s', models)
             status = 'success'
             message = _('Connected successfully! %d models available.') % len(models)
+            if self.provider == 'anthropic':
+                message += _('\n⚠️ Anthropic has no model-list API — this list is built-in. Start a chat to verify your API key.')
             model_list = '\n'.join(models) if models else ''
         except Exception as e:
             _logger.error('Connection test failed: %s', str(e), exc_info=True)
@@ -765,7 +907,7 @@ class Agent(models.Model):
         if not self.provider:
             raise UserError(_('Please select a provider first.'))
 
-        if not self.api_key:
+        if not self.api_key and self.provider != 'ollama':
             raise UserError(_('Please enter an API key first.'))
 
         try:
@@ -775,16 +917,20 @@ class Agent(models.Model):
             if not models:
                 raise UserError(_('No models found. Please check your API key.'))
 
-            # Store available models in a config parameter
-            key = f'mcp.available_models.{self.provider}'
-            self.env['ir.config_parameter'].set_param(key, ','.join(models))
+            # Upsert discovered models into mcp.model.option
+            ModelOption = self.env['mcp.model.option']
+            for m in models:
+                if not ModelOption.search([('provider', '=', self.provider), ('name', '=', m)], limit=1):
+                    ModelOption.create({'provider': self.provider, 'name': m, 'is_discovered': True})
 
             # Auto-select first available model
-            if models:
-                self.model_name = models[0]
-                _logger.info('Set model_name to: %s (available: %s)', models[0], models)
+            self.model_name = models[0]
+            first = ModelOption.search(
+                [('provider', '=', self.provider), ('name', '=', models[0])], limit=1
+            )
+            self.model_selection = first
+            _logger.info('Set model_name to: %s (available: %s)', models[0], models)
 
-            # Show success notification
             return {
                 'type': 'ir.actions.client',
                 'tag': 'display_notification',
@@ -798,23 +944,6 @@ class Agent(models.Model):
         except Exception as e:
             _logger.error('Failed to fetch models: %s', str(e))
             raise UserError(_('Failed to fetch models: %s') % str(e))
-
-    def _get_model_selection(self):
-        """Get available models based on provider."""
-        self.ensure_one()
-        key = f'mcp.available_models.{self.provider}'
-        models_str = self.env['ir.config_parameter'].get_param(key, '')
-        if models_str:
-            return [(m, m) for m in models_str.split(',')]
-        # Default fallback models
-        defaults = {
-            'anthropic': [('claude-sonnet-4-6', 'Claude Sonnet 4-6'), ('claude-3-5-sonnet-20241022', 'Claude 3.5 Sonnet')],
-            'openai': [('gpt-4o', 'GPT-4o'), ('gpt-4o-mini', 'GPT-4o Mini')],
-            'gemini': [('gemini-2.0-flash', 'Gemini 2.0 Flash'), ('gemini-1.5-flash', 'Gemini 1.5 Flash')],
-            'ollama': [('llama3.1', 'Llama 3.1'), ('mistral', 'Mistral')],
-            'minimax': [('abab6.5s-chat', 'abab6.5s-chat')],
-        }
-        return defaults.get(self.provider, [])
 
     def action_open_chat(self):
         """

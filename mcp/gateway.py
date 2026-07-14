@@ -25,10 +25,12 @@ Developer notes:
 
 import logging
 import json
+import re
 from datetime import datetime, timedelta
 import pytz
 from odoo import _, fields
 from odoo.exceptions import AccessError, UserError
+from odoo.tools import html_sanitize
 from .tools.dispatcher import ToolDispatcher
 
 _logger = logging.getLogger(__name__)
@@ -40,6 +42,7 @@ FALLBACK_MODELS = {
     'anthropic': 'claude-haiku-4-5-20250501',
     'gemini': 'gemini-1.5-flash',
     'ollama': 'llama3.1',
+    'grok': 'grok-3-mini',
 }
 
 
@@ -56,7 +59,7 @@ def detect_message_format(provider_type, model_id):
         elif model_id.startswith('gemini-'):
             return 'gemini'
         else:
-            # minimax, deepseek, qwen, glm, kimi, gpt, etc.
+            # deepseek, qwen, glm, kimi, gpt, minimax model names (opencode models), etc.
             return 'openai'
 
     if provider_type == 'anthropic':
@@ -214,6 +217,107 @@ def normalize_history_for_format(messages, target_format):
     return normalized
 
 
+_STDIO_MCP_READ_TIMEOUT = 15  # seconds — bounds how long a hung/slow external stdio MCP server can block a worker
+
+
+def _readline_with_timeout(pipe, timeout=_STDIO_MCP_READ_TIMEOUT):
+    """`pipe.readline()` blocks forever if the child never writes another line —
+    select() first so a hung/crashed stdio MCP server can't hang the whole
+    request (and orphan the subprocess, since `finally: proc.kill()` never
+    runs if readline() itself never returns)."""
+    import select
+    ready, _, _ = select.select([pipe], [], [], timeout)
+    if not ready:
+        raise TimeoutError(f'No response from MCP server within {timeout}s')
+    return pipe.readline()
+
+
+def _sanitize_html_blocks(data):
+    """Sanitize any {"_type": "html", "content": ...} block's content in place
+    (including ones nested inside a {"_type": "mixed", "blocks": [...]} array).
+
+    The model's structured reply is untrusted (a prompt-injected tool result or
+    a manipulated response could ask for raw <img onerror=...> etc.) — every
+    other _type is rendered via t-esc or a controlled markdown pass on the
+    frontend, but 'html' is rendered with a raw t-out, so it must be sanitized
+    before it's ever stored/displayed.
+    """
+    if not isinstance(data, dict):
+        return data
+    if data.get('_type') == 'html' and isinstance(data.get('content'), str):
+        data['content'] = html_sanitize(data['content'])
+    elif data.get('_type') == 'mixed' and isinstance(data.get('blocks'), list):
+        for block in data['blocks']:
+            _sanitize_html_blocks(block)
+    return data
+
+
+_SURROGATE_PAIR_ESCAPE_RE = re.compile(r'\\u(d[89ab][0-9a-f]{2})\\u(d[c-f][0-9a-f]{2})', re.IGNORECASE)
+_UNICODE_ESCAPE_RE = re.compile(r'\\u([0-9a-f]{4})', re.IGNORECASE)
+
+
+def _decode_stray_unicode_escapes(text):
+    """Some LLMs occasionally write literal '\\uD83D\\uDCCA'-style escape text
+    instead of the actual emoji glyph (e.g. inside a plain-text reply's
+    content). A literal backslash is legal inside a JSON string, so
+    json.loads() never touches it — it survives all the way to the browser
+    as raw backslash-u text instead of the intended character. Decode any
+    such literal escape sequences (surrogate pairs first, then lone BMP
+    escapes) back into real characters."""
+    if not isinstance(text, str) or '\\u' not in text:
+        return text
+    text = _SURROGATE_PAIR_ESCAPE_RE.sub(
+        lambda m: chr(0x10000 + (int(m.group(1), 16) - 0xD800) * 0x400 + (int(m.group(2), 16) - 0xDC00)),
+        text,
+    )
+    return _UNICODE_ESCAPE_RE.sub(lambda m: chr(int(m.group(1), 16)), text)
+
+
+def _decode_content_unicode_escapes(data):
+    """Recursively apply _decode_stray_unicode_escapes to every 'content'
+    string, including ones nested inside a {"_type": "mixed", "blocks": [...]}
+    array — same recursive shape as _sanitize_html_blocks."""
+    if not isinstance(data, dict):
+        return data
+    if isinstance(data.get('content'), str):
+        data['content'] = _decode_stray_unicode_escapes(data['content'])
+    if data.get('_type') == 'mixed' and isinstance(data.get('blocks'), list):
+        for block in data['blocks']:
+            _decode_content_unicode_escapes(block)
+    return data
+
+
+def _repair_broken_content_json(text):
+    """Best-effort repair for a common LLM mistake: a literal, unescaped quote
+    character left inside a {"_type": "...", "content": "..."} reply's content
+    string (e.g. `when you say "foo", ...` instead of `when you say \\"foo\\", ...`).
+    json.loads() correctly rejects this, and without a repair the raw JSON text
+    is shown to the user verbatim instead of a clean message.
+
+    Only handles this project's own documented single-trailing-"content"-field
+    shape (used by _type: text/error/html) — not a general JSON repairer, and
+    returns None if the text doesn't match that shape so callers can fall back
+    to their existing "show as plain text" behavior.
+    """
+    m = re.match(r'^\s*\{\s*"_type"\s*:\s*"(\w+)"\s*,\s*"content"\s*:\s*"', text)
+    if not m:
+        return None
+    rest = text[m.end():]
+    tail = re.search(r'"\s*\}\s*$', rest)
+    if not tail:
+        return None
+    raw_content = rest[:tail.start()]
+    # Neutralize any quote NOT already preceded by a backslash (the actual bug)
+    # so json.loads can decode legitimate escapes (\n, \\, already-correct \")
+    # without choking on the broken literal ones.
+    neutralized = re.sub(r'(?<!\\)"', '\\"', raw_content)
+    try:
+        content_val = json.loads('"' + neutralized + '"')
+    except (json.JSONDecodeError, ValueError):
+        content_val = raw_content
+    return {'_type': m.group(1), 'content': content_val}
+
+
 def format_tool_specs_for_api(tool_specs, target_format):
     """
     Convert tool specifications to the target API format.
@@ -321,7 +425,8 @@ class McpGateway:
         self._logger = logging.getLogger(self.__class__.__module__)
 
     def run(self, agent_id: int, user_message: str, session_id: int = None,
-            active_model: str = None, active_id: int = None) -> dict:
+            active_model: str = None, active_id: int = None,
+            staged_attachment_id: int = None) -> dict:
         """
         Execute full agentic loop: message → provider → tools → reply.
 
@@ -389,21 +494,34 @@ class McpGateway:
         if agent.enable_memory:
             system_prompt = self._inject_memory(agent, self.user, system_prompt)
 
-        # ── 4a. Inject current date/time into system prompt (fresh per API call) ──
+        # ── 4a. Inject current user info so AI always knows who it's talking to ──
+        user = self.env.user
+        user_info = f"\n\nCURRENT USER: {user.name}"
+        if user.email:
+            user_info += f" <{user.email}>"
+        if user.company_id:
+            user_info += f" | Company: {user.company_id.name}"
+        dept = getattr(user, 'department_id', None)
+        if dept:
+            user_info += f" | Department: {dept.name}"
+        system_prompt += user_info
+
+        # ── 4b. Inject current date/time into system prompt (fresh per API call) ──
         # datetime.now() called inline - no intermediate variables
         system_prompt += f"\n\nCURRENT DATE AND TIME: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} (server) / {datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S UTC')}\nWhen user says 'today', 'tomorrow', etc, calculate from this date, never guess."
         _logger.info("DATE_INJECTION_CHECK: %s", datetime.now().strftime('%Y-%m-%d %H:%M:%S'))
 
-        # ── 4b. Add tool usage rules to prevent hallucination ───────────────
+        # ── 4c. Add tool usage rules to prevent hallucination ───────────────
         system_prompt += """
-IMPORTANT TOOL USAGE RULES:
-- You must call a tool for EVERY query or action request, even if you performed a similar action earlier in this session or have it in memory/history.
-- NEVER reply with cached or previously retrieved data from history or memory if the user is asking to look up, search, list, or show information. Always run a fresh tool call to get the latest database state.
-- Do not bypass tool calls. Bypassing tool calls and answering from memory is strictly prohibited.
-- Do not assume you know what is in the database. Always query the database using the tools.
-- Each user request is independent. Do not assume a previous tool call satisfies the current request.
-- Never report success for an action unless you received a tool result confirming it in THIS turn.
-- If the user asks to create, update, delete, or search for anything, you MUST call the appropriate tool. Do not skip the tool call based on previous history."""
+CRITICAL TOOL USAGE RULES (DO NOT HALLUCINATE):
+- You MUST call a tool for EVERY query or action request — no exceptions. Even if you performed a similar action earlier in this session.
+- NEVER answer from memory, training data, or session history. The database changes constantly. Always run a fresh tool call.
+- NEVER answer questions about records, counts, balances, names, or any Odoo data without querying first. Your training data is outdated.
+- NEVER call the same tool twice with the same arguments in one turn. If you already have the data, use it and proceed.
+- If you need field names for a model, call get_model_schema ONCE — do not guess, do not call it again on the same model.
+- Never report success for an action unless you received a confirming tool result IN THIS TURN.
+- Each user request is independent. A previous tool call never satisfies the current request.
+- If the user asks to create, update, delete, find, list, show, count, or check anything — call the tool. No exceptions."""
 
         # ── 4c. Inject structured JSON response format ──────────────────────
         system_prompt += """
@@ -414,34 +532,66 @@ Choose the _type that best fits your answer:
 
 {"_type": "text", "content": "Your plain-text answer here."}
 
-{"_type": "table", "title": "Optional title", "headers": ["Col A", "Col B"], "rows": [["val1", "val2"]]}
+{"_type": "table", "title": "Products (38)", "subtitle": "Filtered by: active=true", "headers": ["Name", "Price", "Code"], "rows": [["Laptop", "$1,200", "LAP-01"]]}
 
-{"_type": "fields", "title": "Record: Sale Order #42", "data": {"Customer": "Acme", "Total": 4500.0, "State": "done"}}
+{"_type": "fields", "title": "Sale Order #42", "subtitle": "Confirmed · Customer: Acme · $4,500", "data": {"Customer": "Acme", "Total": "$4,500", "State": "Confirmed"}}
 
 {"_type": "html", "content": "<div class='alert alert-success'>Done.</div>"}
 
 {"_type": "image", "url": "/web/image/product.template/1/image_1920", "alt": "Product image"}
 
-{"_type": "attachment", "url": "/web/content/123", "filename": "invoice.pdf", "mimetype": "application/pdf"}
+{"_type": "chart", "chart_id": 10, "title": "Sales by Month"} — use to SHOW/RE-DISPLAY a chart already saved via create_echart (e.g. user says "show me that chart again", "can I see the sales chart"). Get chart_id via read_record/search_read on mcp.echart first. Do NOT include an "options" field — the frontend fetches the chart's current data live from chart_id.
 
-{"_type": "cards", "title": "Products", "items": [{"title": "Laptop", "subtitle": "$1,200", "image_url": "/web/image/product.template/1/image_1920", "fields": {"Stock": 42}}]}
+{"_type": "attachment", "url": "/web/content/123", "filename": "invoice.pdf", "mimetype": "application/pdf", "size_bytes": 48213}
 
-{"_type": "mixed", "blocks": [{"_type": "text", "content": "Summary:"}, {"_type": "table", "headers": ["A"], "rows": [["v"]]}]}
+{"_type": "cards", "title": "Products (5)", "items": [{"title": "Laptop", "subtitle": "$1,200", "image_url": "/web/image/product.template/1/image_1920", "fields": {"Stock": 42, "Code": "LAP-01"}}]}
 
-Selection rules:
-- table: multiple records with the same fields (use tool results directly)
-- fields: details of a single record
-- cards: products, contacts, or any record set where images or visual layout matters
-- html: coloured badges, alerts, progress bars, formatted summaries
-- mixed: combine a text intro + table, or text + fields
-- text: short conversational answers, confirmations, error explanations
-- NEVER include markdown, code fences, or extra text outside the JSON
+{"_type": "stats", "title": "Invoice Overview", "items": [{"label": "Total", "value": "47", "color": "primary"}, {"label": "Overdue", "value": "8", "color": "danger"}, {"label": "Amount Due", "value": "$125,400", "color": "success"}]}
+
+{"_type": "list", "title": "Product Types", "items": ["Goods (consu)", "Service", "Combo"], "ordered": false}
+
+{"_type": "mixed", "blocks": [{"_type": "text", "content": "Here is the summary:"}, {"_type": "table", "title": "Orders", "headers": ["Name", "Total"], "rows": [["SO001", "$500"]]}]}
+
+Selection rules — use the FIRST type that fits, in this order:
+1. cards: products, contacts, or any set where images matter — always prefer over table when records have images
+2. table: 2+ records with the same fields — ALWAYS include row count in title e.g. "Invoices (12)"
+3. fields: exactly ONE record's details — include key status in subtitle e.g. "Confirmed · $4,500"
+4. stats: answer contains one or more numbers/counts/totals — use when asked "how many", "total", "count", "overview", "summary of numbers". Each item needs label + value + color (primary/success/danger/warning/muted).
+5. list: 3–15 simple text items with no columns — use for "what are the", "list the", "what types", "what options", "what stages". Use ordered:true for steps/sequences.
+6. mixed: summary sentence + data (text block + table or fields)
+7. html: coloured status badges, alerts, progress indicators
+8. image: when showing a single image
+9. chart: when asked to show/re-display a previously created chart (from create_echart) — find its id first via read_record/search_read on mcp.echart
+10. attachment: when sharing a file download
+11. text: conversational reply, confirmation, or explanation with no data — content must be plain prose, NO markdown bold (**), NO markdown tables (|), NO bullet lists with *. If you have structured data, use the correct type.
+
+Standards that apply to ALL types:
+- table/cards: ALWAYS include count in title: "Products (38)", never just "Products"
+- fields: ALWAYS include a subtitle with the 2-3 most important status fields
+- NEVER include markdown, code fences, or any text outside the JSON object
 - The entire response must be a single JSON object starting with { and ending with }
 
-IMAGE FIELDS: When search_read returns a field like image_1920, image_128, etc., the value is already a URL string (e.g. "/web/image/product.template/5/image_1920"). Use it directly as image_url in cards items. Never request image fields in table or fields types — they are only useful in cards or image types."""
+IMAGE FIELDS: When search_read returns image_1920, image_128, etc., the value is already a URL string. Use it as image_url in cards. Never include image fields in table or fields types."""
 
-        # ── 5. Build tool specs from agent tools + external MCP servers ───
-        tool_specs = self._build_tool_specs(agent.effective_tool_ids, agent)
+        # ── 5. Build tool specs — filtered by user's access rules ────────
+        _is_admin = (
+            self.user.id in (1, 2)
+            or self.user.has_group('base.group_system')
+            or self.user.has_group('mcp_gateway.group_mcp_admin')
+            or self.user._is_admin()
+        )
+        if _is_admin:
+            _effective_tools = agent.effective_tool_ids
+        else:
+            _rules = self.env['mcp.access.rule'].get_rules_for_user(self.user)
+            if _rules.get('rules_matched') and not _rules.get('all_tools_allowed'):
+                _allowed = _rules['tool_ids'].ids
+                _effective_tools = agent.effective_tool_ids.filtered(
+                    lambda t: t.id in _allowed
+                )
+            else:
+                _effective_tools = agent.effective_tool_ids
+        tool_specs = self._build_tool_specs(_effective_tools, agent)
 
         # ── 5a. Inject dynamic tool guidance into system prompt ────────────
         tool_guidance = self._build_tool_guidance(tool_specs)
@@ -473,6 +623,36 @@ IMAGE FIELDS: When search_read returns a field like image_1920, image_128, etc.,
         insert_idx = 1
         messages.insert(insert_idx, synthetic_response)
         messages.insert(insert_idx, synthetic_date_msg)
+
+        # If user uploaded a file via the chat UI, prepend context note to the message
+        if staged_attachment_id:
+            try:
+                _att_rows = self.env['ir.attachment'].search_read(
+                    [('id', '=', staged_attachment_id)], ['name', 'mimetype', 'file_size']
+                )
+                if _att_rows:
+                    _att = _att_rows[0]
+                    _SPREADSHEET_TYPES = {
+                        'application/vnd.ms-excel',
+                        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                        'application/vnd.oasis.opendocument.spreadsheet',
+                    }
+                    if _att['mimetype'] in _SPREADSHEET_TYPES:
+                        _read_hint = (
+                            f' To read the spreadsheet rows use execute_orm: '
+                            f'`return read_excel({staged_attachment_id})` — returns list of row lists, handles .xls/.xlsx/.ods automatically.'
+                        )
+                    else:
+                        _read_hint = ''
+                    _att_note = (
+                        f'[User uploaded file: "{_att["name"]}" (mimetype: {_att["mimetype"]}, '
+                        f'attachment_id: {staged_attachment_id}).{_read_hint} '
+                        f'To link it to a record after processing use execute_orm: '
+                        f'env["ir.attachment"].browse({staged_attachment_id}).write({{"res_model": "model.name", "res_id": record_id}})]'
+                    )
+                    user_message = _att_note + '\n\n' + user_message
+            except Exception:
+                pass  # don't break chat if attachment lookup fails
 
         # Always append the new user message
         messages.append({'role': 'user', 'content': user_message})
@@ -510,6 +690,23 @@ IMAGE FIELDS: When search_read returns a field like image_1920, image_128, etc.,
             raise
 
         assistant_text = response.get('text', '') if response else ''
+        if assistant_text:
+            cleaned = assistant_text.strip()
+            if cleaned.startswith('```'):
+                lines = cleaned.split('\n')
+                if lines[0].startswith('```'):
+                    lines = lines[1:]
+                if lines and lines[-1].strip() == '```':
+                    lines = lines[:-1]
+                cleaned = '\n'.join(lines).strip()
+            assistant_text = cleaned
+
+            brace_idx = assistant_text.find('{"_type":')
+            if brace_idx >= 0:
+                assistant_text = assistant_text[brace_idx:]
+                rbrace_idx = assistant_text.rfind('}')
+                if rbrace_idx > 0:
+                    assistant_text = assistant_text[:rbrace_idx + 1]
         input_tokens = total_input
         output_tokens = total_output
 
@@ -536,6 +733,22 @@ IMAGE FIELDS: When search_read returns a field like image_1920, image_128, etc.,
                 _logger.warning('Gateway returned empty reply with no tool calls. Response: %s', response)
                 assistant_text = "I was unable to generate a response. Please try again or rephrase your message."
 
+        # Final guard: if AI returned plain text (ignored format instruction), wrap as {"_type": "text"}
+        if assistant_text and not assistant_text.strip().startswith('{'):
+            assistant_text = json.dumps({"_type": "text", "content": _decode_stray_unicode_escapes(assistant_text)})
+
+        # Sanitize any raw-HTML block before it's ever stored/displayed — the
+        # model's own reply is untrusted input (see _sanitize_html_blocks).
+        if assistant_text:
+            try:
+                parsed = json.loads(assistant_text)
+                assistant_text = json.dumps(_sanitize_html_blocks(_decode_content_unicode_escapes(parsed)))
+            except (json.JSONDecodeError, TypeError):
+                repaired = _repair_broken_content_json(assistant_text)
+                if repaired:
+                    _logger.warning('Repaired malformed JSON in assistant reply (unescaped quote in content)')
+                    assistant_text = json.dumps(_sanitize_html_blocks(_decode_content_unicode_escapes(repaired)))
+
         # Log assistant reply
         self.env['mcp.session.message'].create({
             'session_id': session.id,
@@ -552,8 +765,10 @@ IMAGE FIELDS: When search_read returns a field like image_1920, image_128, etc.,
         })
 
         # ── 10. Cost tracking ───────────────────────────────────────
+        # sudo'd: this is a system-computed billing ledger, not a user-facing
+        # write — see mcp_cost_entry_* ACL rows (read-only for user/employee).
         try:
-            self.env['mcp.cost.entry'].create({
+            self.env['mcp.cost.entry'].sudo().create({
                 'session_id': session.id,
                 'input_tokens': input_tokens,
                 'output_tokens': output_tokens,
@@ -783,8 +998,18 @@ IMAGE FIELDS: When search_read returns a field like image_1920, image_128, etc.,
                 ('session_id', '=', session.id),
             ], order='create_date ASC')
 
+            def _plain(content):
+                try:
+                    p = json.loads(content or '')
+                    if isinstance(p, dict):
+                        return p.get('content') or p.get('text') or ''
+                except Exception:
+                    pass
+                return content or ''
+
             conversation = '\n'.join([
-                f'{m.role}: {m.content}' for m in messages
+                f'{m.role}: {_plain(m.content)}' for m in messages
+                if m.role in ('user', 'assistant') and _plain(m.content)
             ])
 
             summarize_prompt = [
@@ -903,19 +1128,87 @@ Quick reference - available local tools:
         if len(tool_specs) > 10:
             guidance += f"- ... and {len(tool_specs) - 10} more tools\n"
 
+        if any(t.get('name') == 'execute_orm' for t in tool_specs):
+            guidance += """
+ORM METHOD GOTCHA — read_group() takes orderby=, not order=:
+env[model].read_group() is the raw ORM method — its sort kwarg is orderby=, e.g. orderby='amount_total desc'. order= only exists on the separate read_group TOOL (which translates it internally); passing order= directly to env[model].read_group() raises "unexpected keyword argument 'order'".
+
+SALE ORDER METHODS — common name confusion:
+- action_quotation_sent(ids)  → sets state='sent' ONLY, does NOT send any email
+- action_quotations_send()    → opens UI wizard, NOT usable programmatically
+- To actually send quotation emails programmatically:
+    template = env.ref('sale.email_template_edi_sale')
+    for order in env['sale.order'].browse(ids):
+        template.send_mail(order.id, force_send=True)
+
+SALE ORDER CONFIRM WORKFLOW:
+- Create order lines BEFORE calling action_confirm (lines added after may not link correctly)
+- action_confirm() → state: draft → sale (confirmed), NOT draft → sent
+
+INVOICE WORKFLOW (programmatic, no wizard needed):
+  1. Create:  inv_id = env['account.move'].create({'move_type':'out_invoice','partner_id':X,'invoice_line_ids':[(0,0,{'product_id':Y,'quantity':1,'price_unit':Z})]}).id
+  2. Post:    env['account.move'].browse(inv_id).action_post()
+  3. Pay:     env['account.payment.register'].with_context(active_model='account.move',active_ids=[inv_id]).create({}).action_create_payments()
+- NOTE: account.invoice no longer exists — it is account.move with move_type='out_invoice'
+
+PURCHASE ORDER WORKFLOW:
+- Create: env['purchase.order'].create({'partner_id':X,'order_line':[(0,0,{'product_id':Y,'product_qty':1,'price_unit':Z})]}).id
+- Confirm: env['purchase.order'].browse(po_id).button_confirm()  → state: draft → purchase
+- Receive goods: find stock.picking linked to PO via po.picking_ids, then call picking.button_validate()
+
+HR EMPLOYEE WORKFLOW:
+- Create: env['hr.employee'].create({'name':X,'job_id':Y,'department_id':Z})
+- Archive: record.write({'active': False})  or  record.toggle_active()
+- Leave request: env['hr.leave'].create({'holiday_status_id':X,'employee_id':Y,'date_from':Z,'date_to':W,'holiday_type':'employee'})
+- Leave approve: env['hr.leave'].browse(id).action_approve()
+
+REPORT/PDF GENERATION — return URL, never render_qweb_pdf:
+- DO NOT use env.ref().render_qweb_pdf() or _render_qweb_pdf() — generates huge binary
+- DO NOT guess report external IDs — they vary across Odoo versions
+- Return the download URL as a string: f'/report/pdf/{report_name}/{record_id}'
+- Common Odoo 18 report names:
+    Invoice/Bill:    account.report_invoice        (account.move)
+    Sale Order:      sale.report_saleorder         (sale.order)
+    Purchase Order:  purchase.report_purchaseorder (purchase.order)
+    Delivery Slip:   stock.report_deliveryslip     (stock.picking)
+- Example: return '/report/pdf/account.report_invoice/2'
+"""
+
         if any(t.get('name') == 'create_echart' for t in tool_specs):
             guidance += """
 CHART CREATION — create_echart (single call, no separate read_group):
 Use ECharts DATASET format: source = list-of-lists where first row is headers.
+IMPORTANT: env[model].read_group() inside data_code is the RAW ORM method, not the read_group TOOL — it takes orderby=, NOT order= (order= only exists on the separate read_group tool and will raise "unexpected keyword argument 'order'" here).
 Bar/Line:
   result = env['sale.order'].read_group(domain=[['date_order','>=','2026-06-01'],['state','not in',['cancel']]], fields=['amount_total:sum'], groupby=['date_order:day'])
   source = [['Date','Sales']] + [[str(r.get('date_order:day','')), r.get('amount_total',0)] for r in result]
   return {'title':{'text':'Sales'},'dataset':{'source':source},'xAxis':{'type':'category'},'yAxis':{'type':'value'},'series':[{'type':'bar'}]}
+Stacked/Area Bar: same shape as Bar, add 'stack':'total' per series for stacked, or 'areaStyle':{} for a filled area.
 Pie:
   result = env['sale.order'].read_group(domain=[], fields=['amount_total:sum'], groupby=['partner_id'])
   source = [['Customer','Amount']] + [[r['partner_id'][1], r.get('amount_total',0)] for r in result if r.get('partner_id')]
   return {'dataset':{'source':source},'series':[{'type':'pie','radius':'60%','encode':{'itemName':'Customer','value':'Amount'}}]}
-NEVER use xAxis.data or series.data — always use dataset.source.
+Donut: identical to Pie but 'radius':['40%','70%'] (inner+outer) instead of a single radius.
+Scatter: source = [['X','Y']] + [[x, y] for ...]; return {'dataset':{'source':source},'xAxis':{'type':'value'},'yAxis':{'type':'value'},'series':[{'type':'scatter'}]}.
+Heatmap: source rows are [xCategory, yCategory, value] triplets; return {'dataset':{'source':source},'xAxis':{'type':'category'},'yAxis':{'type':'category'},'series':[{'type':'heatmap','encode':{'x':0,'y':1,'value':2}}]}.
+Funnel: same encode shape as Pie, 'series':[{'type':'funnel','encode':{'itemName':'Customer','value':'Amount'}}].
+EXCEPTIONS (the only two that do NOT use dataset.source — ECharts requires explicit data arrays for these):
+  Radar: {'radar':{'indicator':[{'name':...,'max':...}, ...]}, 'series':[{'type':'radar','data':[{'value':[...],'name':...}]}]}
+  Gauge (single value): {'series':[{'type':'gauge','data':[{'value':72,'name':'Score'}]}]}
+NEVER use xAxis.data or series.data except for Radar/Gauge above — always use dataset.source otherwise.
+TO EDIT AN EXISTING CHART (recolor, restyle, change its data): do NOT call create_echart again — that always creates a duplicate record. Call read_record on mcp.echart with the chart's id to get its current options, modify the JSON, then call update_record on mcp.echart with that id and the new options (or data_code) value.
+"""
+
+        if any(t.get('name') == 'generate_export_file' for t in tool_specs):
+            guidance += """
+EXPORT FILE GENERATION — generate_export_file (single call):
+IMPORTANT: env[model].read_group() inside data_code is the RAW ORM method — it takes orderby=, NOT order= (order= only exists on the separate read_group tool).
+data_code must query the ORM and end with: return rows — a plain list of lists, header row first, e.g.:
+  result = env['res.partner'].search_read(domain=[], fields=['name','email'])
+  rows = [['Name','Email']] + [[r['name'], r.get('email') or ''] for r in result]
+  return rows
+Every cell must be a plain str/int/float. Never concatenate an int with a str using + (e.g. count + ' orders' raises TypeError) — use str(count) + ' orders' or an f-string instead.
+NEVER build a workbook/csv writer/PDF inside data_code yourself — the sandbox blocks object attribute assignment entirely (openpyxl's Workbook(), csv.writer(), etc. will always fail there). The tool itself builds the actual file from the rows you return, and the download card is shown automatically — do not call any other tool afterward and do not describe the file yourself.
 """
 
         return guidance
@@ -936,7 +1229,7 @@ NEVER use xAxis.data or series.data — always use dataset.source.
             for server in servers:
                 if server.server_type == 'http' and server.url:
                     try:
-                        import httpx
+                        import requests
                         headers = {'Content-Type': 'application/json'}
                         auth_credential = server.get_decrypted_auth_value()
                         if server.auth_type == 'bearer' and auth_credential:
@@ -951,25 +1244,86 @@ NEVER use xAxis.data or series.data — always use dataset.source.
                             'params': {},
                         }
 
-                        with httpx.Client(timeout=10) as client:
-                            resp = client.post(server.url, json=payload, headers=headers)
-                            if resp.status_code == 200:
-                                data = resp.json()
-                                if 'result' in data and 'tools' in data['result']:
-                                    for t in data['result']['tools']:
-                                        tools.append({
-                                            'name': f"ext_{server.name}_{t['name']}",
-                                            'description': f"[{server.name}] {t.get('description', '')}",
-                                            'input_schema': t.get('inputSchema', {}),
-                                            'server_name': server.name,
-                                            'original_name': t['name'],
-                                        })
+                        resp = requests.post(server.url, json=payload, headers=headers, timeout=10)
+                        if resp.status_code == 200:
+                            data = resp.json()
+                            if 'result' in data and 'tools' in data['result']:
+                                for t in data['result']['tools']:
+                                    tools.append({
+                                        'name': f"ext_{server.name}_{t['name']}",
+                                        'description': f"[{server.name}] {t.get('description', '')}",
+                                        'input_schema': t.get('inputSchema', {}),
+                                        'server_name': server.name,
+                                        'original_name': t['name'],
+                                    })
                     except Exception as e:
                         self._logger.warning('Failed to fetch tools from %s: %s', server.name, str(e))
+                elif server.server_type == 'stdio' and server.command:
+                    try:
+                        for t in self._fetch_stdio_mcp_tools(server):
+                            tools.append({
+                                'name': f"ext_{server.name}_{t['name']}",
+                                'description': f"[{server.name}] {t.get('description', '')}",
+                                'input_schema': t.get('inputSchema', {}),
+                                'server_name': server.name,
+                                'original_name': t['name'],
+                            })
+                    except Exception as e:
+                        self._logger.warning('Failed to fetch stdio tools from %s: %s', server.name, str(e))
         except Exception as e:
             self._logger.warning('Failed to load external MCP servers: %s', str(e))
 
         return tools
+
+    def _fetch_stdio_mcp_tools(self, server) -> list:
+        """Launch a stdio MCP server, fetch its tool list, then kill the process."""
+        import subprocess
+        import shlex
+        import os
+
+        command = server.command.strip()
+        args_raw = server.args or ''
+        try:
+            extra_args = json.loads(args_raw) if args_raw.strip().startswith('[') else shlex.split(args_raw)
+        except Exception:
+            extra_args = []
+
+        env_extra = {}
+        if server.env_vars:
+            try:
+                env_extra = json.loads(server.env_vars)
+            except Exception:
+                pass
+
+        proc = subprocess.Popen(
+            [command] + extra_args,
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            env={**os.environ, **env_extra},
+        )
+        try:
+            def _send(msg):
+                proc.stdin.write((json.dumps(msg) + '\n').encode())
+                proc.stdin.flush()
+
+            def _recv():
+                line = _readline_with_timeout(proc.stdout)
+                return json.loads(line) if line else {}
+
+            _send({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {
+                "protocolVersion": "2024-11-05",
+                "capabilities": {},
+                "clientInfo": {"name": "odoo-mcp-gateway", "version": "1.0"},
+            }})
+            _recv()  # consume initialize response
+            _send({"jsonrpc": "2.0", "method": "notifications/initialized", "params": {}})
+            _send({"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}})
+            data = _recv()
+            return data.get('result', {}).get('tools', [])
+        finally:
+            proc.kill()
+            proc.wait()
 
     def _call_provider_with_tools(self, provider, agent, messages, tool_specs, session=None, message_format='openai'):
         """
@@ -991,13 +1345,12 @@ NEVER use xAxis.data or series.data — always use dataset.source.
         total_output = 0
         last_tool_name = None  # Track the last tool called for error handling
         tool_call_counts = {}  # {(tool_name, args_json): int} — track same-call repetitions
+        total_tool_errors = 0  # bounded error budget — let the model try a different approach
+        MAX_TOOL_ERRORS = 3    # before giving up and surfacing the error to the user
 
         # Determine if we should strip system message (for providers that handle system internally)
         # NOTE: Don't strip system messages - the providers extract system from messages parameter
         # and handle it themselves. Stripping would remove the datetime-injected system message.
-        provider_name = getattr(provider, '__class__', None).__name__ or ''
-        # Anthropic handles system separately via 'system' parameter in payload - don't strip
-        # All other providers extract from messages, so don't strip either
         messages_to_send = messages
 
         for turn in range(max_turns):
@@ -1009,7 +1362,7 @@ NEVER use xAxis.data or series.data — always use dataset.source.
                     break
 
             # Retry logic for provider calls (handles transient errors from some providers)
-            max_retries = 2
+            max_retries = 3
             response = None
             # Clean history before each API call to remove ghost/empty turns
             messages_to_send = self.clean_conversation_history(messages_to_send)
@@ -1028,44 +1381,36 @@ NEVER use xAxis.data or series.data — always use dataset.source.
                             if messages_to_send and messages_to_send[-1].get('role') == 'tool':
                                 messages_to_send = messages_to_send[:-1]
                             import time
-                            time.sleep(1 * (attempt + 1))  # 1s, 2s backoff
+                            time.sleep(2 * (attempt + 1))  # 2s, 4s, 6s backoff
                             continue
                     break
                 except Exception as e:
                     if attempt < max_retries:
-                        self._logger.warning('Provider call failed on attempt %d: %s', attempt + 1, str(e))
+                        # Honor a provider's real Retry-After header (attach_retry_after
+                        # in providers/base.py) when present, instead of always using
+                        # the fixed 2s/4s/6s schedule.
+                        backoff = getattr(e, 'retry_after', None)
+                        if backoff is None:
+                            backoff = 2 * (attempt + 1)
+                        self._logger.warning('Provider call failed on attempt %d: %s (retrying in %ss)', attempt + 1, str(e), backoff)
                         import time
-                        time.sleep(1 * (attempt + 1))
+                        time.sleep(backoff)
                     else:
                         raise
 
             if not response:
                 continue
 
-            # Build assistant message from response
-            # Note: Don't include tool_calls in the message for providers that don't need it
-            # Some providers like MiniMax get confused when tool_calls persists across turns
             assistant_msg = {
                 'role': 'assistant',
                 'content': response.get('text') or response.get('reply') or '',
             }
 
-            # Add tool_calls to assistant message for OpenAI-format providers (required for tool result matching)
-            provider_name = getattr(provider, '__class__', None).__name__ or ''
-            if response.get('tool_calls') and 'MiniMax' not in provider_name:
-                if message_format == 'openai':
-                    # OpenAI spec: assistant message must carry tool_calls so tool results can be matched by ID
-                    assistant_msg['tool_calls'] = [
-                        {
-                            'id': tc.get('id', f'tc_{ti}'),
-                            'type': 'function',
-                            'function': {
-                                'name': tc.get('name', ''),
-                                'arguments': tc.get('arguments', '{}') if isinstance(tc.get('arguments'), str) else json.dumps(tc.get('arguments', {})),
-                            }
-                        }
-                        for ti, tc in enumerate(response.get('tool_calls', []))
-                    ]
+            # Each provider owns its own history shape — no format-based branching needed.
+            if response.get('tool_calls'):
+                formatted = provider.format_tool_calls(response.get('tool_calls', []))
+                if formatted:
+                    assistant_msg['tool_calls'] = formatted
 
             messages_to_send.append(assistant_msg)
 
@@ -1074,24 +1419,54 @@ NEVER use xAxis.data or series.data — always use dataset.source.
             total_input += response.get('input_tokens', 0)
             total_output += response.get('output_tokens', 0)
 
-            # Detect possible hallucination: model returned stop with no tool call for action request
-            # on first turn of a new request (turn 0 means first API call in this loop)
-            if turn == 0 and not tool_calls and response.get('finish_reason') in ('stop', 'end_turn'):
-                # Find the user message in history to check for action words
+            # Detect hallucination: model returned stop with no tool call for action request,
+            # and no tool has been called at all yet this session turn.
+            if not tool_calls and total_tool_calls == 0 and response.get('stop_reason') in ('stop', 'end_turn'):
+                # Find the LATEST user message to check for action words — a synthetic
+                # "What is today's date?" pair is always inserted at index 1 of `messages`
+                # (see the date-injection block above), so scanning forward always found
+                # THAT instead of the real user turn that triggered this response, silently
+                # breaking the has_action_word check on every single turn since the date
+                # injection feature was added (only claims_action_done still worked, since
+                # it checks the model's own reply text, not the user message).
                 user_msg_for_check = None
-                for msg in messages:
+                for msg in reversed(messages):
                     if msg.get('role') == 'user' and msg.get('content'):
                         user_msg_for_check = msg.get('content', '')
                         break
 
                 if user_msg_for_check:
                     user_msg_lower = user_msg_for_check.lower()
-                    action_words = ['create', 'make', 'add', 'update', 'delete', 'schedule',
-                                    'find', 'search', 'book', 'cancel', 'list', 'show', 'get',
-                                    'how many', 'count', 'fetch', 'retrieve', 'give me', 'what are']
+                    action_words = [
+                        'create', 'make', 'add', 'update', 'change', 'modify', 'set',
+                        'edit', 'rename', 'remove', 'delete', 'schedule',
+                        'find', 'search', 'book', 'cancel', 'list', 'show', 'get',
+                        'how many', 'count', 'fetch', 'retrieve', 'give me', 'what are',
+                        'tell me', 'display', 'view', 'open', 'check', 'look up',
+                        'report', 'total', 'sum', 'average', 'which', 'who', 'when', 'where',
+                    ]
                     has_action_word = any(w in user_msg_lower for w in action_words)
 
-                    if has_action_word:
+                    # Independent of how the user phrased the request: if the model's OWN
+                    # reply claims a write happened ("Updated the...", "Created X", ...) while
+                    # zero tools were called this turn, that claim is fabricated — no legitimate
+                    # code path produces this. Catches phrasings that dodge the action_words list.
+                    fabrication_verbs = [
+                        'updated', 'created', 'deleted', 'removed', 'changed',
+                        'modified', 'added', 'renamed', 'archived', 'cancelled', 'scheduled',
+                        'posted', 'logged', 'noted', 'attached', 'assigned', 'confirmed',
+                        'approved', 'rejected', 'sent', 'linked', 'merged',
+                    ]
+                    response_text_lower = response_text.lower()
+                    # 'success'/'successfully' catches this whole class regardless of which verb
+                    # the model happened to use — more robust than enumerating every synonym
+                    # (this is exactly how the 'posted' case slipped past the verb list above).
+                    claims_action_done = (
+                        any(v in response_text_lower for v in fabrication_verbs)
+                        or 'success' in response_text_lower
+                    )
+
+                    if has_action_word or claims_action_done:
                         _logger.warning(
                             "HALLUCINATION DETECTED: action request '%s' returned no tool call — retrying with correction.",
                             user_msg_for_check[:80]
@@ -1119,22 +1494,18 @@ NEVER use xAxis.data or series.data — always use dataset.source.
                                 messages_to_send.pop()  # remove correction
                                 messages_to_send.pop()  # remove stale no-tool assistant msg
                                 assistant_msg = {'role': 'assistant', 'content': response_text}
-                                if retry_resp.get('tool_calls') and 'MiniMax' not in provider_name:
-                                    if message_format == 'openai':
-                                        assistant_msg['tool_calls'] = [
-                                            {
-                                                'id': tc.get('id', f'tc_{ti}'),
-                                                'type': 'function',
-                                                'function': {
-                                                    'name': tc.get('name', ''),
-                                                    'arguments': tc.get('arguments', '{}') if isinstance(tc.get('arguments'), str) else json.dumps(tc.get('arguments', {})),
-                                                }
-                                            }
-                                            for ti, tc in enumerate(retry_resp.get('tool_calls', []))
-                                        ]
+                                if retry_resp.get('tool_calls'):
+                                    formatted = provider.format_tool_calls(retry_resp.get('tool_calls', []))
+                                    if formatted:
+                                        assistant_msg['tool_calls'] = formatted
                                 messages_to_send.append(assistant_msg)
                             else:
                                 _logger.warning("Hallucination correction retry also returned no tool calls.")
+                                # The retry call still cost real tokens even though it didn't
+                                # recover — count it, or cost_entry silently under-reports spend.
+                                if retry_resp:
+                                    total_input += retry_resp.get('input_tokens', 0)
+                                    total_output += retry_resp.get('output_tokens', 0)
                                 messages_to_send.pop()  # remove correction, proceed with original
                         except Exception as retry_err:
                             _logger.warning("Hallucination correction retry failed: %s", str(retry_err))
@@ -1210,12 +1581,19 @@ NEVER use xAxis.data or series.data — always use dataset.source.
                 last_tool_name = tool_calls[-1].get('name', 'unknown')
 
             # Execute each tool call and collect results
+            _TERMINAL_TOOLS = frozenset(['create_echart', 'create_record', 'update_record', 'delete_record', 'generate_export_file'])
+            _terminal_results = []  # collect (tool_name, parsed_result) for all terminal successes
+            _hard_stop_error = None  # set (not returned) on a fatal error, so later calls in this
+            _hard_stop_tool = None   # SAME batch (e.g. a legitimate create_record) still get to run
+
             for i, tool_call in enumerate(tool_calls):
                 tool_name = tool_call['name']
                 arguments = tool_call['arguments']
                 tool_call_id = tool_call.get('id') or f'tc_{turn}_{i}'
-                # For get_model_schema: key by model only (different fields= args count as same call)
-                _args_dict = json.loads(arguments) if isinstance(arguments, str) else (arguments or {})
+                try:
+                    _args_dict = json.loads(arguments) if isinstance(arguments, str) else (arguments or {})
+                except Exception:
+                    _args_dict = {}
                 if tool_name == 'get_model_schema':
                     _args_key = (tool_name, json.dumps({'model': _args_dict.get('model', '')}, sort_keys=True))
                 else:
@@ -1265,7 +1643,11 @@ NEVER use xAxis.data or series.data — always use dataset.source.
                             result = json.dumps({'success': False, 'error': f'Tool not found: {tool_name}'})
                             self._logger.warning('Tool not found: %s', tool_name)
                     elif not is_admin and not has_general_access and tool.id not in rules['tool_ids'].ids:
-                        result = json.dumps({'success': False, 'error': f'Access denied to tool: {tool_name}'})
+                        _label = tool.display_name_label or tool_name
+                        result = json.dumps({
+                            'success': False,
+                            'error': f"You don't have access to the \"{_label}\" tool. Please contact your admin to request access.",
+                        })
                         self._logger.warning('User %s not allowed to use tool %s', self.user.name, tool_name)
                     else:
                         # Execute tool
@@ -1276,33 +1658,54 @@ NEVER use xAxis.data or series.data — always use dataset.source.
                             self._logger.error('Tool execution failed for %s: %s', tool_name, str(e))
                             result = json.dumps({'success': False, 'error': str(e)})
 
-                # Check if tool returned an error - if so, stop the loop and return error to user
-                # Don't let the model retry a failed tool call (causes infinite loop)
+                # Check if tool returned an error. Give the model a bounded budget of
+                # chances to recover (e.g. call list_models after a "model does not
+                # exist" error) instead of hard-stopping on the very first failure —
+                # but never let it retry the identical failing call, and never let
+                # errors accumulate without limit (same anti-infinite-loop shape as
+                # the stuck-same-call detector below).
                 try:
                     result_data = json.loads(result)
-                    if isinstance(result_data, dict) and result_data.get('success') is False:
-                        self._logger.info('Tool %s returned error, stopping loop: %s', tool_name, result_data.get('error'))
-                        # Log tool result before returning
-                        display_content = json.dumps({
-                            '_is_structured': True,
-                            'tool_name': tool_name,
-                            'success': False,
-                            'error': result_data.get('error', 'Unknown error'),
-                        })
-                        self.env['mcp.session.message'].create({
-                            'session_id': session.id if session else None,
-                            'role': 'tool_result',
-                            'content': display_content,
-                            'tool_name': tool_name,
-                            'tool_call_id': tool_call_id,
-                        })
-                        # Return the error as the final response instead of continuing loop
-                        return {
-                            'text': f"Tool execution failed: {result_data.get('error', 'Unknown error')}. {result_data.get('message', '')}",
-                            'tool_calls': [],
-                        }, [], total_tool_calls, total_input, total_output, tool_name
                 except (json.JSONDecodeError, TypeError):
-                    pass  # Not JSON, continue normal flow
+                    result_data = None
+
+                if isinstance(result_data, dict) and result_data.get('success') is False:
+                    total_tool_errors += 1
+                    _same_call_failed_before = tool_call_counts[_args_key] > 1
+                    self._logger.info(
+                        'Tool %s returned error (error #%d/%d, repeat_call=%s): %s',
+                        tool_name, total_tool_errors, MAX_TOOL_ERRORS, _same_call_failed_before,
+                        result_data.get('error'),
+                    )
+                    display_content = json.dumps({
+                        '_is_structured': True,
+                        'tool_name': tool_name,
+                        'success': False,
+                        'error': result_data.get('error', 'Unknown error'),
+                    })
+                    self.env['mcp.session.message'].create({
+                        'session_id': session.id if session else None,
+                        'role': 'tool_result',
+                        'content': display_content,
+                        'tool_name': tool_name,
+                        'tool_call_id': tool_call_id,
+                    })
+
+                    if _same_call_failed_before or total_tool_errors > MAX_TOOL_ERRORS:
+                        # Identical call failed twice, or the error budget is exhausted — give up
+                        # on THIS tool, but don't return immediately: a later call in this same
+                        # batch may be an unrelated, legitimate terminal write (e.g. get_model_schema
+                        # fails, create_record right after it should still execute) — finish the
+                        # batch first, then decide what to surface after the loop.
+                        _err = result_data.get('error', 'Unknown error')
+                        _extra = result_data.get('message', '')
+                        _hard_stop_error = f"{_err} {_extra}".strip() if _extra else _err
+                        _hard_stop_tool = tool_name
+                        continue
+
+                    # Let the model see the error and try a different approach next turn.
+                    self._append_tool_result(provider, messages_to_send, tool_call_id, tool_name, result, message_format)
+                    continue
 
                 # Log tool result — convert to structured JSON for frontend card rendering
                 try:
@@ -1322,22 +1725,37 @@ NEVER use xAxis.data or series.data — always use dataset.source.
                 # Append to messages_to_send so it goes in the next provider call
                 self._append_tool_result(provider, messages_to_send, tool_call_id, tool_name, result, message_format)
 
-                # Stop loop after terminal write tools — AI cannot usefully continue after these
-                _TERMINAL_TOOLS = frozenset(['create_echart', 'create_record', 'update_record', 'delete_record'])
+                # Collect terminal write tool results — process all parallel calls before returning
                 if tool_name in _TERMINAL_TOOLS:
                     try:
                         r = json.loads(result)
                         if not (isinstance(r, dict) and r.get('success') is False):
-                            done_msg = self._format_terminal_tool_message(tool_name, r)
-                            return {
-                                'text': done_msg,
-                                'tool_calls': [],
-                            }, [], total_tool_calls, total_input, total_output, tool_name
+                            _terminal_results.append((tool_name, r, _args_dict))
                     except (json.JSONDecodeError, TypeError):
                         pass
 
+            # Return after all parallel terminal tool calls have been processed
+            if _terminal_results:
+                if len(_terminal_results) == 1:
+                    t_name, t_result, t_args = _terminal_results[0]
+                    done_msg = self._format_terminal_tool_message(t_name, t_result, t_args)
+                else:
+                    done_msg = self._format_terminal_tool_messages_bulk(_terminal_results)
+                return {
+                    'text': done_msg,
+                    'tool_calls': [],
+                }, [], total_tool_calls, total_input, total_output, _terminal_results[-1][0]
+
+            # A fatal error occurred somewhere in the batch, and nothing terminal succeeded
+            # alongside it (if something HAD succeeded, the block above already returned it).
+            if _hard_stop_error is not None:
+                return {
+                    'text': json.dumps({'_type': 'error', 'content': _hard_stop_error.strip()}),
+                    'tool_calls': [],
+                }, [], total_tool_calls, total_input, total_output, _hard_stop_tool
+
             # Detect stuck-on-same-tool: if any non-terminal tool called 3+ times, force synthesis
-            _TERMINAL_TOOLS_SET = frozenset(['create_echart', 'create_record', 'update_record', 'delete_record'])
+            _TERMINAL_TOOLS_SET = frozenset(['create_echart', 'create_record', 'update_record', 'delete_record', 'generate_export_file'])
             MAX_SAME_TOOL_CALLS = 3
             _force_exit = False
             for (_stuck_tool, _stuck_args_json), _stuck_count in tool_call_counts.items():
@@ -1450,19 +1868,139 @@ NEVER use xAxis.data or series.data — always use dataset.source.
         self._logger.warning('Max tool-call turns (%d) reached, returning partial response', max_turns)
         return response, tool_calls, total_tool_calls, total_input, total_output, last_tool_name
 
-    def _format_terminal_tool_message(self, tool_name, result):
+    def _model_label(self, model):
+        try:
+            ir_model = self.env['ir.model'].search([('model', '=', model)], limit=1)
+            return ir_model.name if ir_model else (model or 'record')
+        except Exception:
+            return model or 'record'
+
+    def _field_labels(self, model, field_names):
+        field_names = [f for f in field_names if f]
+        try:
+            fget = self.env[model].fields_get(field_names, ['string'])
+            return {f: fget.get(f, {}).get('string', f) for f in field_names}
+        except Exception:
+            return {f: f for f in field_names}
+
+    def _build_terminal_block(self, tool_name, result, arguments=None):
+        """Structured {_type: fields/table} block describing a completed write
+        action, in place of a bare 'Record updated successfully' sentence — shows
+        the actual field values so the user can see what really happened."""
+        arg_dict = arguments or {}
+        res = result.get('result', {}) if isinstance(result, dict) else {}
+
         if tool_name == 'create_echart':
-            name = result.get('name', 'Chart') if isinstance(result, dict) else 'Chart'
-            chart_id = result.get('id', '') if isinstance(result, dict) else ''
-            return f'Chart "{name}" created successfully (ID: {chart_id}). View it in the MCP Charts app.'
-        elif tool_name == 'create_record':
-            record_id = result.get('id', '') if isinstance(result, dict) else ''
-            return f'Record created successfully (ID: {record_id}).'
-        elif tool_name == 'update_record':
-            return 'Record(s) updated successfully.'
-        elif tool_name == 'delete_record':
-            return 'Record(s) deleted successfully.'
-        return 'Operation completed successfully.'
+            chart = self.env['mcp.echart'].browse(res.get('id')) if res.get('id') else self.env['mcp.echart']
+            if chart.exists():
+                return {
+                    '_type': 'chart',
+                    'title': res.get('name', 'Chart'),
+                    'subtitle': f"Chart · ID #{chart.id}",
+                    'chart_id': chart.id,
+                    'options': chart.options or '{}',
+                }
+            return {
+                '_type': 'fields',
+                'title': res.get('name', 'Chart'),
+                'subtitle': f"Chart created · ID #{res.get('id', '')}",
+                'data': {k: v for k, v in {
+                    'Type': arg_dict.get('chart_type'),
+                    'Model': arg_dict.get('model'),
+                }.items() if v},
+            }
+
+        if tool_name == 'create_record':
+            model = arg_dict.get('model') or res.get('model', '')
+            record_id = res.get('id')
+            values = arg_dict.get('values') or {}
+            data, display_name = {}, ''
+            if model and record_id:
+                try:
+                    rec = self.env[model].browse(record_id)
+                    display_name = rec.display_name or ''
+                    field_names = [f for f in values.keys() if f in rec._fields]
+                    if field_names:
+                        row = rec.read(field_names)[0]
+                        labels = self._field_labels(model, field_names)
+                        data = {labels[f]: row.get(f) for f in field_names}
+                except Exception:
+                    pass
+            return {
+                '_type': 'fields',
+                'title': display_name or self._model_label(model),
+                'subtitle': f"Created in {self._model_label(model)} · ID #{record_id}",
+                'data': data or {'ID': record_id},
+            }
+
+        if tool_name == 'update_record':
+            model = arg_dict.get('model', '')
+            res_ids = arg_dict.get('res_ids') or []
+            values = arg_dict.get('values') or {}
+            try:
+                recs = self.env[model].browse(res_ids).exists()
+                field_names = [f for f in values.keys() if f in recs._fields]
+                if recs and field_names:
+                    labels = self._field_labels(model, field_names)
+                    rows_data = recs.read(field_names)
+                    if len(rows_data) == 1:
+                        row = rows_data[0]
+                        return {
+                            '_type': 'fields',
+                            'title': recs.display_name or self._model_label(model),
+                            'subtitle': f"Updated · ID #{row.get('id')}",
+                            'data': {labels[f]: row.get(f) for f in field_names},
+                        }
+                    by_id = {row['id']: row for row in rows_data}
+                    rows = []
+                    for rec in recs:
+                        row = by_id.get(rec.id, {})
+                        rows.append([rec.display_name or rec.id] + [row.get(f) for f in field_names])
+                    return {
+                        '_type': 'table',
+                        'title': f"{len(rows_data)} record(s) updated in {self._model_label(model)}",
+                        'headers': ['Record'] + [labels[f] for f in field_names],
+                        'rows': rows,
+                    }
+            except Exception:
+                pass
+            return {
+                '_type': 'fields',
+                'title': f"Updated in {self._model_label(model)}",
+                'subtitle': f"{len(res_ids)} record(s)",
+                'data': {'IDs': ', '.join(str(i) for i in res_ids)} if res_ids else {},
+            }
+
+        if tool_name == 'generate_export_file':
+            return {
+                '_type': 'attachment',
+                'url': res.get('url'),
+                'filename': res.get('filename'),
+                'mimetype': res.get('mimetype'),
+                'size_bytes': res.get('size_bytes'),
+            }
+
+        if tool_name == 'delete_record':
+            model = arg_dict.get('model', '')
+            res_ids = arg_dict.get('res_ids') or []
+            return {
+                '_type': 'fields',
+                'title': f"Deleted from {self._model_label(model)}",
+                'subtitle': f"{len(res_ids)} record(s)",
+                'data': {'IDs': ', '.join(str(i) for i in res_ids)} if res_ids else {},
+            }
+
+        return {'_type': 'text', 'content': 'Operation completed successfully.'}
+
+    def _format_terminal_tool_message(self, tool_name, result, arguments=None):
+        return json.dumps(self._build_terminal_block(tool_name, result, arguments))
+
+    def _format_terminal_tool_messages_bulk(self, terminal_results):
+        """Structured summary when multiple terminal tool calls ran in parallel."""
+        blocks = [self._build_terminal_block(tn, r, args) for tn, r, args in terminal_results]
+        if len(blocks) == 1:
+            return json.dumps(blocks[0])
+        return json.dumps({'_type': 'mixed', 'blocks': blocks})
 
     def _format_tool_success_html(self, tool_name, arguments, result_data):
         """
@@ -1475,10 +2013,17 @@ NEVER use xAxis.data or series.data — always use dataset.source.
 
         result_val = result_data.get('result')
 
+        # Get active user's company currency symbol
+        try:
+            company_currency_symbol = self.env.company.currency_id.symbol or '$'
+        except Exception:
+            company_currency_symbol = '$'
+
         # Create structured output
         out = {
             '_is_structured': True,
             'tool_name': tool_name,
+            'company_currency_symbol': company_currency_symbol,
         }
 
         # 1. search_read
@@ -1584,6 +2129,93 @@ NEVER use xAxis.data or series.data — always use dataset.source.
             })
             return json.dumps(out)
 
+        # set_binary_field
+        elif tool_name == 'set_binary_field' and isinstance(result_val, dict):
+            out.update({
+                'model': result_val.get('model'),
+                'record_id': result_val.get('record_id'),
+                'field': result_val.get('field'),
+                'size_bytes': result_val.get('size_bytes'),
+            })
+            return json.dumps(out)
+
+        # create_records
+        elif tool_name == 'create_records' and isinstance(result_val, dict):
+            out.update({'model': result_val.get('model'), 'ids': result_val.get('ids', []), 'count': result_val.get('count', 0)})
+            return json.dumps(out)
+
+        # update_records
+        elif tool_name == 'update_records' and isinstance(result_val, dict):
+            out.update({'model': result_val.get('model'), 'count': result_val.get('count', 0)})
+            return json.dumps(out)
+
+        # delete_records
+        elif tool_name == 'delete_records' and isinstance(result_val, dict):
+            out.update({'model': arg_dict.get('model', result_val.get('model', '')), 'count': result_val.get('count', 0)})
+            return json.dumps(out)
+
+        # lookup_model_history
+        elif tool_name == 'lookup_model_history' and isinstance(result_val, dict):
+            out.update({
+                'queried': result_val.get('queried'),
+                'current_name': result_val.get('current_name'),
+                'renamed': result_val.get('renamed', False),
+                'note': result_val.get('note', ''),
+            })
+            return json.dumps(out)
+
+        # accounting_health_summary
+        elif tool_name == 'accounting_health_summary' and isinstance(result_val, dict):
+            out.update({
+                'receivables': result_val.get('receivables', {}),
+                'payables': result_val.get('payables', {}),
+                'draft_invoice_backlog': result_val.get('draft_invoice_backlog', 0),
+                'as_of': result_val.get('as_of', ''),
+            })
+            return json.dumps(out)
+
+        # import_from_file
+        elif tool_name == 'import_from_file' and isinstance(result_val, dict):
+            out.update({
+                'model': result_val.get('model'),
+                'source_file': result_val.get('source_file'),
+                'fields': result_val.get('fields', []),
+                'total_rows': result_val.get('total_rows', 0),
+                'created_count': result_val.get('created_count', 0),
+                'ids': result_val.get('ids', []),
+                'errors': result_val.get('errors', []),
+            })
+            return json.dumps(out)
+
+        # post_message
+        elif tool_name == 'post_message' and isinstance(result_val, dict):
+            out.update({
+                'message_id': result_val.get('message_id'),
+                'model': result_val.get('model'),
+                'record_id': result_val.get('record_id'),
+            })
+            return json.dumps(out)
+
+        # get_attachments
+        elif tool_name == 'get_attachments' and isinstance(result_val, dict):
+            out.update({
+                'model': result_val.get('model'),
+                'record_id': result_val.get('record_id'),
+                'attachments': result_val.get('attachments', []),
+                'count': result_val.get('count', 0),
+            })
+            return json.dumps(out)
+
+        # upload_attachment
+        elif tool_name == 'upload_attachment' and isinstance(result_val, dict):
+            out.update({
+                'id': result_val.get('id'),
+                'name': result_val.get('name'),
+                'model': result_val.get('model'),
+                'record_id': result_val.get('record_id'),
+            })
+            return json.dumps(out)
+
         # Fallback to simple success message
         out.update({
             'success': True,
@@ -1595,9 +2227,10 @@ NEVER use xAxis.data or series.data — always use dataset.source.
         """
         Append a tool result to the messages array in provider-specific format.
 
-        Anthropic:    {'role': 'user', 'content': [{'type': 'tool_result', ...}]}
-        OpenAI:       {'role': 'tool', 'tool_call_id': ..., 'content': ...}
-        Gemini:       {'role': 'user', 'parts': [{'functionResponse': ...}]}
+        Delegates to provider.format_tool_result() so each provider adapter owns
+        its own history shape. The message_format parameter is kept for backwards
+        compatibility but is no longer used — the provider instance itself determines
+        the correct format.
 
         Args:
             provider: The provider adapter instance
@@ -1605,41 +2238,9 @@ NEVER use xAxis.data or series.data — always use dataset.source.
             tool_call_id: Provider-specific tool call ID
             tool_name: Tool name
             result: JSON string result from tool execution
-            message_format: Target format ('anthropic', 'openai', 'gemini')
+            message_format: Unused — retained for call-site compatibility
         """
-        # Use message_format instead of provider name for consistent format handling
-        if message_format == 'anthropic':
-            messages.append({
-                'role': 'user',
-                'content': [{
-                    'type': 'tool_result',
-                    'tool_use_id': tool_call_id,
-                    'content': result,
-                }],
-            })
-        elif message_format == 'openai':
-            messages.append({
-                'role': 'tool',
-                'tool_call_id': tool_call_id,
-                'content': result,
-            })
-        elif message_format == 'gemini':
-            messages.append({
-                'role': 'user',
-                'parts': [{
-                    'functionResponse': {
-                        'name': tool_name,
-                        'response': {'result': result},
-                    }
-                }],
-            })
-        else:
-            # Default to OpenAI format
-            messages.append({
-                'role': 'tool',
-                'tool_call_id': tool_call_id,
-                'content': result,
-            })
+        messages.append(provider.format_tool_result(tool_call_id, tool_name, result))
 
     def _retry_with_fallback_model(self, provider, agent, messages, tool_specs, original_model):
         """
@@ -1739,7 +2340,7 @@ NEVER use xAxis.data or series.data — always use dataset.source.
             str: JSON result string
         """
         try:
-            import httpx
+            import requests
 
             server = self.env['mcp.external.server'].search([
                 ('name', '=', server_name),
@@ -1748,6 +2349,9 @@ NEVER use xAxis.data or series.data — always use dataset.source.
 
             if not server:
                 return json.dumps({'success': False, 'error': f'External server not found: {server_name}'})
+
+            if server.server_type == 'stdio':
+                return self._call_stdio_mcp_tool(server, tool_name, arguments)
 
             headers = {'Content-Type': 'application/json'}
             auth_credential = server.get_decrypted_auth_value()
@@ -1766,27 +2370,94 @@ NEVER use xAxis.data or series.data — always use dataset.source.
                 },
             }
 
-            with httpx.Client(timeout=30) as client:
-                resp = client.post(server.url, json=payload, headers=headers)
-                resp.raise_for_status()
-                data = resp.json()
+            resp = requests.post(server.url, json=payload, headers=headers, timeout=30)
+            resp.raise_for_status()
+            data = resp.json()
 
-                if 'error' in data:
-                    return json.dumps({'success': False, 'error': data['error'].get('message', 'Unknown error')})
+            if 'error' in data:
+                return json.dumps({'success': False, 'error': data['error'].get('message', 'Unknown error')})
 
-                if 'result' in data:
-                    result_data = data['result']
-                    if result_data.get('isError'):
-                        return json.dumps({'success': False, 'error': result_data['content'][0]['text']})
-                    return json.dumps({'success': True, 'result': result_data['content'][0]['text']})
+            if 'result' in data:
+                result_data = data['result']
+                if result_data.get('isError'):
+                    return json.dumps({'success': False, 'error': result_data['content'][0]['text']})
+                return json.dumps({'success': True, 'result': result_data['content'][0]['text']})
 
-                return json.dumps({'success': False, 'error': 'Unexpected response format'})
+            return json.dumps({'success': False, 'error': 'Unexpected response format'})
 
-        except httpx.TimeoutException:
+        except requests.exceptions.Timeout:
             return json.dumps({'success': False, 'error': 'External MCP server timed out'})
         except Exception as e:
             self._logger.error('External MCP tool call failed: %s', str(e))
             return json.dumps({'success': False, 'error': str(e)})
+
+    def _call_stdio_mcp_tool(self, server, tool_name: str, arguments: dict) -> str:
+        """Call a tool on a stdio MCP server via JSON-RPC over subprocess stdin/stdout."""
+        import subprocess
+        import shlex
+        import os
+
+        command = server.command.strip()
+        args_raw = server.args or ''
+        try:
+            extra_args = json.loads(args_raw) if args_raw.strip().startswith('[') else shlex.split(args_raw)
+        except Exception:
+            extra_args = []
+
+        env_extra = {}
+        if server.env_vars:
+            try:
+                env_extra = json.loads(server.env_vars)
+            except Exception:
+                pass
+
+        proc = subprocess.Popen(
+            [command] + extra_args,
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            env={**os.environ, **env_extra},
+        )
+        try:
+            def _send(msg):
+                proc.stdin.write((json.dumps(msg) + '\n').encode())
+                proc.stdin.flush()
+
+            def _recv():
+                line = _readline_with_timeout(proc.stdout)
+                return json.loads(line) if line else {}
+
+            _send({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {
+                "protocolVersion": "2024-11-05",
+                "capabilities": {},
+                "clientInfo": {"name": "odoo-mcp-gateway", "version": "1.0"},
+            }})
+            _recv()
+            _send({"jsonrpc": "2.0", "method": "notifications/initialized", "params": {}})
+            _send({"jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": {
+                "name": tool_name,
+                "arguments": arguments,
+            }})
+            data = _recv()
+
+            if 'error' in data:
+                return json.dumps({'success': False, 'error': data['error'].get('message', 'Unknown error')})
+
+            result = data.get('result', {})
+            if result.get('isError'):
+                content = result.get('content', [{}])
+                return json.dumps({'success': False, 'error': content[0].get('text', 'Tool error')})
+
+            content = result.get('content', [{}])
+            text = content[0].get('text', json.dumps(result)) if content else json.dumps(result)
+            return json.dumps({'success': True, 'result': text})
+
+        except Exception as e:
+            self._logger.error('Stdio MCP tool call failed (%s/%s): %s', server.name, tool_name, str(e))
+            return json.dumps({'success': False, 'error': str(e)})
+        finally:
+            proc.kill()
+            proc.wait()
 
     def _build_message_history(self, session, system_prompt: str) -> list:
         """

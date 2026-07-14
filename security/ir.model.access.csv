@@ -11,14 +11,15 @@ mcp_tool_set_admin,mcp_tool_set_admin,model_mcp_tool_set,group_mcp_admin,1,1,1,1
 mcp_agent_user,mcp_agent_user,model_mcp_agent,group_mcp_user,1,0,0,0
 mcp_agent_manager,mcp_agent_manager,model_mcp_agent,group_mcp_manager,1,1,1,0
 mcp_agent_admin,mcp_agent_admin,model_mcp_agent,group_mcp_admin,1,1,1,1
-mcp_session_user,mcp_session_user,model_mcp_session,group_mcp_user,1,1,1,0
-mcp_session_manager,mcp_session_manager,model_mcp_session,group_mcp_manager,1,1,1,0
-mcp_session_admin,mcp_session_admin,model_mcp_session,group_mcp_admin,1,1,1,0
+mcp_session_user,mcp_session_user,model_mcp_session,group_mcp_user,1,1,1,1
+mcp_session_manager,mcp_session_manager,model_mcp_session,group_mcp_manager,1,1,1,1
+mcp_session_admin,mcp_session_admin,model_mcp_session,group_mcp_admin,1,1,1,1
 mcp_session_message_user,mcp_session_message_user,model_mcp_session_message,group_mcp_user,1,1,1,0
-mcp_session_employee,mcp_session_employee,model_mcp_session,base.group_user,1,1,1,0
+mcp_session_employee,mcp_session_employee,model_mcp_session,base.group_user,1,1,1,1
 mcp_session_message_employee,mcp_session_message_employee,model_mcp_session_message,base.group_user,1,1,1,0
 mcp_access_rule_manager,mcp_access_rule_manager,model_mcp_access_rule,group_mcp_manager,1,1,1,1
 mcp_access_rule_admin,mcp_access_rule_admin,model_mcp_access_rule,group_mcp_admin,1,1,1,1
+mcp_prompt_template_user,mcp_prompt_template_user,model_mcp_prompt_template,group_mcp_user,1,0,0,0
 mcp_prompt_template_manager,mcp_prompt_template_manager,model_mcp_prompt_template,group_mcp_manager,1,1,1,0
 mcp_prompt_template_admin,mcp_prompt_template_admin,model_mcp_prompt_template,group_mcp_admin,1,1,1,1
 mcp_agent_memory_user,mcp_agent_memory_user,model_mcp_agent_memory,group_mcp_user,1,0,0,0
@@ -26,8 +27,8 @@ mcp_webhook_trigger_manager,mcp_webhook_trigger_manager,model_mcp_webhook_trigge
 mcp_webhook_trigger_admin,mcp_webhook_trigger_admin,model_mcp_webhook_trigger,group_mcp_admin,1,1,1,1
 mcp_cost_entry_manager,mcp_cost_entry_manager,model_mcp_cost_entry,group_mcp_manager,1,1,1,0
 mcp_cost_entry_admin,mcp_cost_entry_admin,model_mcp_cost_entry,group_mcp_admin,1,1,1,0
-mcp_cost_entry_user,mcp_cost_entry_user,model_mcp_cost_entry,group_mcp_user,1,1,1,0
-mcp_cost_entry_employee,mcp_cost_entry_employee,model_mcp_cost_entry,base.group_user,1,1,1,0
+mcp_cost_entry_user,mcp_cost_entry_user,model_mcp_cost_entry,group_mcp_user,1,0,0,0
+mcp_cost_entry_employee,mcp_cost_entry_employee,model_mcp_cost_entry,base.group_user,1,0,0,0
 mcp_chat_wizard_user,mcp_chat_wizard_user,model_mcp_chat_wizard,group_mcp_user,1,1,1,1
 mcp_tool_scan_wizard_manager,mcp_tool_scan_wizard_manager,model_mcp_tool_scan_wizard,group_mcp_manager,1,1,1,1
 mcp_tool_scan_line_manager,mcp_tool_scan_line_manager,model_mcp_tool_scan_line,group_mcp_manager,1,1,1,1
@@ -38,13 +39,13 @@ mcp_connection_test_wizard_employee,mcp_connection_test_wizard_employee,model_mc
 mcp_external_server_user,mcp_external_server_user,model_mcp_external_server,group_mcp_user,1,0,0,0
 mcp_external_server_manager,mcp_external_server_manager,model_mcp_external_server,group_mcp_manager,1,1,1,0
 mcp_external_server_admin,mcp_external_server_admin,model_mcp_external_server,group_mcp_admin,1,1,1,1
-mcp_issue_user,mcp_issue_user,model_mcp_issue,group_mcp_user,1,0,0,0
-mcp_issue_manager,mcp_issue_manager,model_mcp_issue,group_mcp_manager,1,1,1,0
-mcp_issue_admin,mcp_issue_admin,model_mcp_issue,group_mcp_admin,1,1,1,1
-mcp_issue_tag_user,mcp_issue_tag_user,model_mcp_issue_tag,group_mcp_user,1,0,0,0
-mcp_issue_tag_manager,mcp_issue_tag_manager,model_mcp_issue_tag,group_mcp_manager,1,1,1,0
-mcp_issue_tag_admin,mcp_issue_tag_admin,model_mcp_issue_tag,group_mcp_admin,1,1,1,1
 mcp_echart_user,mcp_echart_user,model_mcp_echart,group_mcp_user,1,0,0,0
 mcp_echart_manager,mcp_echart_manager,model_mcp_echart,group_mcp_manager,1,1,1,0
 mcp_echart_admin,mcp_echart_admin,model_mcp_echart,group_mcp_admin,1,1,1,1
+mcp_model_option_user,mcp.model.option user,model_mcp_model_option,group_mcp_user,1,0,0,0
+mcp_model_option_manager,mcp.model.option manager,model_mcp_model_option,group_mcp_manager,1,1,1,0
+mcp_model_option_admin,mcp.model.option admin,model_mcp_model_option,group_mcp_admin,1,1,1,1
+mcp_dashboard_user,mcp_dashboard_user,model_mcp_dashboard,group_mcp_user,1,0,0,0
+mcp_dashboard_manager,mcp_dashboard_manager,model_mcp_dashboard,group_mcp_manager,1,1,1,0
+mcp_dashboard_admin,mcp_dashboard_admin,model_mcp_dashboard,group_mcp_admin,1,1,1,1
 

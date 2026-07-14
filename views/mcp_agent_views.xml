@@ -29,9 +29,11 @@
                     <field name="status" widget="badge" decoration-success="status=='online'" decoration-warning="status=='unconfigured'" decoration-danger="status=='error'"/>
                 </header>
                 <sheet>
+                    <field name="avatar" widget="image" class="oe_avatar" options="{'zoom': true, 'preview_image': 'avatar'}"/>
                     <!-- Title and basic info -->
                     <group colspan="2" col="2">
                         <field name="name" placeholder="e.g. Sales Assistant"/>
+                        <field name="premade_avatar"/>
                         <field name="active"/>
                         <field name="provider"/>
                         <field name="color" widget="color_picker"/>
@@ -44,7 +46,8 @@
                     <!-- Provider Settings -->
                     <group string="Provider Configuration" colspan="2" col="2">
                         <field name="model_name"/>
-                        <field name="model_selection" string="Select from Available Models" placeholder="Pick a model..."/>
+                        <field name="model_selection" string="Select from Available Models"
+                               options="{'no_create': True, 'no_quick_create': True}"/>
                         <field name="api_base_url" placeholder="Optional: Override default API URL"/>
                         <field name="api_key" password="1" colspan="2"/>
                     </group>

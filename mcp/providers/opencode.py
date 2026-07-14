@@ -1,13 +1,13 @@
 """
 mcp_gateway/mcp/providers/opencode.py
 
-OpenCode AI API adapter using OpenAI SDK.
+OpenCode AI API adapter — raw HTTPS via requests, no vendor SDK.
 
 Key classes:
   OpenCodeAdapter — Adapter for OpenCode AI models
 
 Dependencies:
-  - openai package (pip install openai)
+  - requests (already a hard Odoo dependency — no extra pip install needed)
   - base.AbstractProvider
 
 Developer notes:
@@ -18,6 +18,7 @@ Developer notes:
 """
 
 import logging
+import requests
 from .base import AbstractProvider
 from odoo import _
 from odoo.exceptions import UserError
@@ -194,9 +195,9 @@ class OpenCodeAdapter(AbstractProvider):
             _logger.error('OpenCode response parse error: %s', str(e))
             raise UserError(_('Failed to parse OpenCode response: %s') % str(e))
 
-    def call(self, agent, messages: list, tool_specs: list = None) -> dict:
+    def call(self, agent, messages: list, tool_specs: list) -> dict:
         """
-        Call OpenCode API using httpx.
+        Call OpenCode API using a direct HTTPS request.
 
         Routes to different endpoints based on model family:
         - claude-* models: POST /v1/messages (Anthropic format)
@@ -206,7 +207,7 @@ class OpenCodeAdapter(AbstractProvider):
         Args:
             agent: mcp.agent record
             messages: List of message dicts
-            tool_specs: Optional list of tool specifications
+            tool_specs: List of tool specifications
 
         Returns:
             dict: Standardized response
@@ -214,12 +215,7 @@ class OpenCodeAdapter(AbstractProvider):
         Raises:
             UserError: on API errors
         """
-        if tool_specs is None:
-            tool_specs = []
-
         try:
-            import httpx
-
             api_key = agent._decrypt_api_key()
             base_url = (agent.api_base_url or self.DEFAULT_BASE_URL).rstrip('/')
             model_id = (agent.model_name or '').lower()
@@ -245,8 +241,7 @@ class OpenCodeAdapter(AbstractProvider):
 
             _logger.info('Calling OpenCode with model: %s, endpoint: %s', agent.model_name, endpoint)
 
-            with httpx.Client(timeout=60.0) as client:
-                response = client.post(url, headers=headers, json=payload)
+            response = requests.post(url, headers=headers, json=payload, timeout=120)
 
             _logger.info('OpenCode response: status=%s, body=%s', response.status_code, response.text[:500])
 
@@ -267,9 +262,12 @@ class OpenCodeAdapter(AbstractProvider):
         except UserError:
             # Re-raise UserErrors immediately so they aren't caught and rewritten
             raise
-        except httpx.HTTPStatusError as e:
+        except requests.exceptions.HTTPError as e:
             _logger.error('OpenCode HTTP error: %s', str(e))
             raise UserError(_('OpenCode API error: %s') % str(e))
+        except (requests.exceptions.ConnectionError, requests.exceptions.Timeout) as e:
+            _logger.error('OpenCode connection error: %s', str(e))
+            raise UserError(_('Failed to connect to OpenCode API. Check your internet connection.'))
         except Exception as e:
             error_str = str(e)
             if 'authentication' in error_str.lower() or 'api key' in error_str.lower():
@@ -376,16 +374,16 @@ class OpenCodeAdapter(AbstractProvider):
             list: Available model IDs
         """
         try:
-            from openai import OpenAI
-
             api_key = agent._decrypt_api_key()
             base_url = (agent.api_base_url or self.DEFAULT_BASE_URL).rstrip('/')
 
-            client = OpenAI(api_key=api_key, base_url=base_url, timeout=10.0)
-
-            # Try to get models list from API
-            models_response = client.models.list()
-            models = [m.id for m in models_response.data]
+            response = requests.get(
+                f'{base_url}/models',
+                headers={'Authorization': f'Bearer {api_key}'},
+                timeout=10,
+            )
+            response.raise_for_status()
+            models = [m['id'] for m in response.json().get('data', [])]
 
             if models:
                 return models
@@ -397,11 +395,12 @@ class OpenCodeAdapter(AbstractProvider):
         # Organized by format: Anthropic (/v1/messages), OpenAI (/v1/responses), OpenAI-compatible (/v1/chat/completions)
         return [
             # Free models
-            'minimax-m2.5-free',
+            'mimo-v2.5-free',
             'deepseek-v4-flash-free',
             'big-pickle',
             'ring-2.6-1t-free',
-            'nemotron-3-super-free',
+            'nemotron-3-ultra-free',
+            'north-mini-code-free',
             # MiniMax (OpenAI-compatible /v1/chat/completions)
             'minimax-m2.7',
             'minimax-m2.5',
@@ -448,3 +447,26 @@ class OpenCodeAdapter(AbstractProvider):
             'gemini-3.1-pro',
             'gemini-3-flash',
         ]
+
+    def format_tool_calls(self, tool_calls: list) -> list:
+        """Uses OpenAI format: tool_calls list with id/type/function keys."""
+        import json as _json
+        return [
+            {
+                'id': tc.get('id', f'tc_{i}'),
+                'type': 'function',
+                'function': {
+                    'name': tc.get('name', ''),
+                    'arguments': (
+                        tc.get('arguments', '{}')
+                        if isinstance(tc.get('arguments'), str)
+                        else _json.dumps(tc.get('arguments', {}))
+                    ),
+                }
+            }
+            for i, tc in enumerate(tool_calls)
+        ]
+
+    def format_tool_result(self, tool_call_id: str, tool_name: str, result: str) -> dict:
+        """Uses OpenAI format: role=tool message with tool_call_id."""
+        return {'role': 'tool', 'tool_call_id': tool_call_id, 'content': result}

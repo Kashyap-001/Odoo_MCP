@@ -340,7 +340,7 @@ class ExternalServer(models.Model):
     def _test_http_connection(self):
         """Test HTTP-based MCP server connection by calling tools/list."""
         try:
-            import httpx
+            import requests
 
             if not self.url:
                 return {
@@ -365,12 +365,7 @@ class ExternalServer(models.Model):
                 'params': {},
             }
 
-            with httpx.Client(timeout=15) as client:
-                response = client.post(
-                    self.url,
-                    json=payload,
-                    headers=headers,
-                )
+            response = requests.post(self.url, json=payload, headers=headers, timeout=15)
 
             if response.status_code in [200, 404]:
                 # Parse response
@@ -413,7 +408,7 @@ class ExternalServer(models.Model):
                     'tool_count': 0,
                 }
 
-        except httpx.TimeoutException:
+        except requests.exceptions.Timeout:
             return {
                 'success': False,
                 'message': 'Connection timed out after 15s',

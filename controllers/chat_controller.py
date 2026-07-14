@@ -11,6 +11,7 @@ Routes:
   GET    /mcp/agents/available
   GET    /mcp/tools/available
   GET    /mcp/session/<id>/transcript
+  GET    /mcp/echart/<id>/view
   POST   /mcp/webhook/<token>
 
 Dependencies:
@@ -20,6 +21,7 @@ Dependencies:
 """
 
 import logging
+from markupsafe import escape
 from odoo import http
 from odoo.exceptions import AccessError, UserError
 from ..mcp.gateway import McpGateway
@@ -34,9 +36,25 @@ class ChatController(http.Controller):
     Provides endpoints for chat, agent/tool discovery, webhooks, and session export.
     """
 
+    @http.route('/mcp/attachment/stage', type='json', auth='user', methods=['POST'])
+    def stage_attachment(self, filename: str, mimetype: str, datas: str) -> dict:
+        """Stage a file upload before sending to AI. Creates a floating ir.attachment."""
+        try:
+            att = http.request.env['ir.attachment'].create({
+                'name': filename,
+                'mimetype': mimetype,
+                'datas': datas,
+                'type': 'binary',
+            })
+            return {'status': 'success', 'data': {'id': att.id, 'name': att.name, 'mimetype': mimetype}}
+        except Exception as e:
+            _logger.error('Failed to stage attachment: %s', str(e))
+            return {'status': 'error', 'error': str(e)}
+
     @http.route('/mcp/chat', type='json', auth='user', methods=['POST'])
     def chat(self, agent_id: int, message: str, session_id: int = None,
-             active_model: str = None, active_id: int = None) -> dict:
+             active_model: str = None, active_id: int = None,
+             staged_attachment_id: int = None) -> dict:
         """
         Chat endpoint — send message to agent and get reply.
 
@@ -71,6 +89,7 @@ class ChatController(http.Controller):
                 session_id=session_id,
                 active_model=active_model,
                 active_id=active_id,
+                staged_attachment_id=staged_attachment_id,
             )
 
             agent = http.request.env['mcp.agent'].browse(agent_id)
@@ -280,6 +299,73 @@ class ChatController(http.Controller):
             _logger.error('Error exporting transcript: %s', str(e))
             return http.request.not_found()
 
+    @http.route('/mcp/echart/<int:echart_id>/view', type='http', auth='user')
+    def echart_view(self, echart_id: int, **kwargs):
+        """
+        Full-size, authenticated chart view for the "View" button in chat.
+
+        No token/sudo — relies entirely on the same ir.rule (own-or-shared,
+        manager/admin see all) that already governs mcp.echart everywhere else.
+        Reading `.options`/`.name` below triggers Odoo's normal access check;
+        a chart outside the user's visibility raises AccessError, caught below
+        as a plain 404 (matches the public share page's not-found behavior,
+        doesn't leak whether the id exists at all).
+
+        Args:
+            echart_id (int): Chart ID to display
+
+        Returns:
+            Response: Full-page HTML rendering the chart
+        """
+        try:
+            echart = http.request.env['mcp.echart'].browse(echart_id)
+            if not echart.exists():
+                return http.request.not_found()
+
+            title = escape(echart.name or 'Chart')
+            options_json = (echart.options or '{}').replace('</script>', '<\\/script>')
+        except AccessError:
+            return http.request.not_found()
+
+        echarts_url = '/mcp_gateway/static/lib/echarts.min.js'
+
+        html = f'''<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>{title}</title>
+<style>
+  * {{ margin: 0; padding: 0; box-sizing: border-box; }}
+  body {{ background: #1a1a2e; color: #eee; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }}
+  .header {{ background: #16213e; padding: 12px 20px; border-bottom: 1px solid #0f3460; }}
+  .header h1 {{ font-size: 16px; font-weight: 600; color: #e94560; }}
+  #chart {{ width: 100%; height: calc(100vh - 45px); }}
+  .error {{ padding: 24px; color: #e94560; font-family: monospace; white-space: pre-wrap; }}
+</style>
+</head>
+<body>
+<div class="header"><h1>{title}</h1></div>
+<div id="chart"></div>
+<script src="{echarts_url}"></script>
+<script>
+(function() {{
+  var options = {options_json};
+  var el = document.getElementById('chart');
+  var chart = echarts.init(el, null, {{ renderer: 'canvas' }});
+  window.addEventListener('resize', function() {{ chart.resize(); }});
+  try {{
+    chart.setOption(options, true);
+  }} catch(e) {{
+    el.innerHTML = '<div class="error">ECharts setOption error: ' + e.message + '</div>';
+  }}
+}})();
+</script>
+</body>
+</html>'''
+
+        return http.request.make_response(html, [('Content-Type', 'text/html; charset=utf-8')])
+
     @http.route('/mcp/webhook/<string:token>', type='json', auth='none', methods=['POST'])
     def webhook_trigger(self, token: str, **kwargs) -> dict:
         """
@@ -306,24 +392,17 @@ class ChatController(http.Controller):
             if not trigger:
                 return {'status': 'error', 'error': 'Invalid webhook token'}
 
-            # Get the trigger model and record from request
-            body = http.request.get_json_data()
+            body = http.request.get_json_data() or {}
             model_name = body.get('model')
             record_id = body.get('record_id')
 
-            if not model_name or not record_id:
-                return {'status': 'error', 'error': 'Missing model or record_id in request'}
+            # Record is optional — supports scheduled/recordless triggers (e.g. n8n cron)
+            record = None
+            if model_name and record_id:
+                record = http.request.env[model_name].browse(record_id)
+                if not record.exists():
+                    return {'status': 'error', 'error': 'Record not found'}
 
-            # Verify model matches trigger
-            if model_name != trigger.trigger_model:
-                return {'status': 'error', 'error': 'Model mismatch'}
-
-            # Get record
-            record = http.request.env[model_name].browse(record_id)
-            if not record.exists():
-                return {'status': 'error', 'error': 'Record not found'}
-
-            # Fire trigger
             result = trigger.fire(record)
 
             return {

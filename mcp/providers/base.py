@@ -12,10 +12,13 @@ Dependencies:
   - json for payload building
 
 Developer notes:
-  - All providers follow same interface: build_headers, build_payload, parse_response
+  - All providers follow same interface: build_headers, build_payload, parse_response,
+    format_tool_calls, format_tool_result
   - Providers never see plaintext API keys (decrypted only in call())
   - Error handling standardized: all exceptions converted to UserError
   - Subclasses implement provider-specific protocol details
+  - format_tool_calls / format_tool_result own all message-history shaping so
+    gateway.py never needs a message_format if/elif chain again
 """
 
 import logging
@@ -25,6 +28,29 @@ from odoo.exceptions import UserError
 from odoo import _
 
 _logger = logging.getLogger(__name__)
+
+
+def _retry_after_seconds(response):
+    """Parse a `Retry-After` header (seconds, the common case for LLM APIs) off
+    an HTTP response. Returns None if absent/unparseable so callers can fall
+    back to their own fixed backoff schedule."""
+    if response is None:
+        return None
+    value = response.headers.get('Retry-After')
+    if not value:
+        return None
+    try:
+        return max(0, int(float(value)))
+    except (TypeError, ValueError):
+        return None
+
+
+def attach_retry_after(exc, response):
+    """Attach a `.retry_after` (int seconds, or None) attribute to an exception
+    that's about to be raised, so an outer retry loop (gateway.py) can honor a
+    provider's real Retry-After header instead of always using a fixed backoff."""
+    exc.retry_after = _retry_after_seconds(response)
+    return exc
 
 
 class AbstractProvider(ABC):
@@ -139,6 +165,40 @@ class AbstractProvider(ABC):
             UserError: if fetch fails
         """
 
+    @abstractmethod
+    def format_tool_calls(self, tool_calls: list) -> list:
+        """
+        Shape the tool_calls list for embedding in an assistant history message.
+
+        Called by gateway.py after the provider returns tool_calls in its response,
+        before appending the assistant message to the history that will be sent on
+        the next turn.
+
+        Args:
+            tool_calls (list): Raw tool_calls from parse_response(), each a dict with
+                               at minimum 'id', 'name', 'arguments' keys.
+
+        Returns:
+            list: Provider-specific tool_calls shape to store in assistant_msg['tool_calls'].
+                  Return an empty list if this provider does not use tool_calls in history.
+        """
+
+    @abstractmethod
+    def format_tool_result(self, tool_call_id: str, tool_name: str, result: str) -> dict:
+        """
+        Build the history message that carries a tool's result back to the model.
+
+        Called by gateway.py (_append_tool_result) after a tool executes.
+
+        Args:
+            tool_call_id (str): Provider-specific call ID.
+            tool_name (str): Tool name.
+            result (str): JSON-serialized tool output.
+
+        Returns:
+            dict: A single message dict ready to append to the history list.
+        """
+
     def call(self, agent, messages: list, tool_specs: list) -> dict:
         """
         Make an API call to the LLM provider.
@@ -190,7 +250,7 @@ class AbstractProvider(ABC):
                 except requests.exceptions.HTTPError as e:
                     if e.response.status_code in (500, 502, 503, 429):
                         if attempt < max_retries:
-                            backoff = 2 ** attempt
+                            backoff = _retry_after_seconds(e.response) or (2 ** attempt)
                             self._logger.warning(
                                 '%s attempt %d failed (HTTP %d): retrying in %ds',
                                 agent.provider, attempt + 1, e.response.status_code, backoff

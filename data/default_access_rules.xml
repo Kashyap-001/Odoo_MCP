@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo noupdate="1">
+    <!--
+        Default access rules — installed once, customisable by admin.
+        noupdate="1" means upgrades never overwrite admin changes.
+
+        Rule logic:
+          - empty agent_ids → all agents allowed
+          - empty tool_ids  → all tools allowed
+          - multiple rules for the same user are merged (OR logic)
+    -->
+
+    <!-- Rule 1: Basic users — read-only tools only -->
+    <record id="default_access_rule_user" model="mcp.access.rule">
+        <field name="name">AI Gateway User Access</field>
+        <field name="sequence">10</field>
+        <field name="active" eval="True"/>
+        <field name="group_ids" eval="[(4, ref('mcp_gateway.group_mcp_user'))]"/>
+        <field name="tool_ids" eval="[
+            (4, ref('mcp_gateway.tool_list_models')),
+            (4, ref('mcp_gateway.tool_get_model_schema')),
+            (4, ref('mcp_gateway.tool_search_read')),
+            (4, ref('mcp_gateway.tool_read_record')),
+            (4, ref('mcp_gateway.tool_read_group')),
+            (4, ref('mcp_gateway.tool_get_attachments')),
+            (4, ref('mcp_gateway.tool_read_attachment')),
+            (4, ref('mcp_gateway.tool_lookup_model_history')),
+            (4, ref('mcp_gateway.tool_accounting_health_summary')),
+        ]"/>
+        <field name="can_view_sessions" eval="True"/>
+        <field name="can_export" eval="False"/>
+        <field name="rate_limit_day" eval="0"/>
+        <field name="rate_limit_month" eval="0"/>
+    </record>
+
+    <!-- Rule 2: Managers — all tools, can export -->
+    <record id="default_access_rule_manager" model="mcp.access.rule">
+        <field name="name">AI Gateway Manager Access</field>
+        <field name="sequence">20</field>
+        <field name="active" eval="True"/>
+        <field name="group_ids" eval="[(4, ref('mcp_gateway.group_mcp_manager'))]"/>
+        <!-- empty tool_ids = all tools allowed -->
+        <field name="can_view_sessions" eval="True"/>
+        <field name="can_export" eval="True"/>
+        <field name="rate_limit_day" eval="0"/>
+        <field name="rate_limit_month" eval="0"/>
+    </record>
+</odoo>

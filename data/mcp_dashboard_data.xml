@@ -1,0 +1,9 @@
+<odoo>
+    <data noupdate="1">
+        <record id="mcp_dashboard_uncategorized" model="mcp.dashboard">
+            <field name="name">Uncategorized</field>
+            <field name="sequence">100</field>
+            <field name="icon">🗂️</field>
+        </record>
+    </data>
+</odoo>

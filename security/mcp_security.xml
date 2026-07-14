@@ -6,6 +6,14 @@
         <record id="group_mcp_user" model="res.groups">
             <field name="name">AI Gateway User</field>
             <field name="category_id" ref="base.module_category_tools"/>
+            <!-- Record rules scoping sessions to their owner (mcp_session_user_rule)
+                 key off base.group_user, not group_mcp_user — imply it so a user
+                 assigned only this group can't end up with zero visible sessions
+                 if they were ever granted group_mcp_user without the base group
+                 (e.g. via a programmatic/API role assignment). ponytail: this data
+                 block is noupdate="1" — an already-installed DB needs this applied
+                 once manually (or via a future migration) since -u won't re-touch it. -->
+            <field name="implied_ids" eval="[(4, ref('base.group_user'))]"/>
             <field name="comment">Basic access to chat with agents and use tools</field>
         </record>
 

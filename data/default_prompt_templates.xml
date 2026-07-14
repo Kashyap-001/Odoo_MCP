@@ -1,0 +1,122 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo noupdate="0">
+
+    <!-- TASK — record operations with real Odoo model names -->
+
+    <record id="tpl_find_records" model="mcp.prompt.template">
+        <field name="name">Search Customers</field>
+        <field name="category">task</field>
+        <field name="is_global">True</field>
+        <field name="sequence">10</field>
+        <field name="variables">condition</field>
+        <field name="content">Find all customers (res.partner) where {condition}. Show name, email, phone, and city as a table.</field>
+        <field name="description">Search customer records matching a condition.</field>
+    </record>
+
+    <record id="tpl_find_sale_orders" model="mcp.prompt.template">
+        <field name="name">Find Sale Orders</field>
+        <field name="category">task</field>
+        <field name="is_global">True</field>
+        <field name="sequence">20</field>
+        <field name="variables">condition</field>
+        <field name="content">Find sale orders (sale.order) where {condition}. Show order number, customer name, total amount, and state as a table.</field>
+        <field name="description">Search sale orders by any condition.</field>
+    </record>
+
+    <record id="tpl_create_record" model="mcp.prompt.template">
+        <field name="name">Create Customer</field>
+        <field name="category">task</field>
+        <field name="is_global">True</field>
+        <field name="sequence">30</field>
+        <field name="variables">name, email, phone</field>
+        <field name="content">Create a new customer (res.partner) with: name={name}, email={email}, phone={phone}. Confirm the record ID when done.</field>
+        <field name="description">Create a new customer record.</field>
+    </record>
+
+    <record id="tpl_create_product" model="mcp.prompt.template">
+        <field name="name">Create Product</field>
+        <field name="category">task</field>
+        <field name="is_global">True</field>
+        <field name="sequence">40</field>
+        <field name="variables">name, price</field>
+        <field name="content">Create a new product (product.template) with: name={name}, list_price={price}, type=consu. Confirm the new product ID when done.</field>
+        <field name="description">Create a new product in Odoo.</field>
+    </record>
+
+    <record id="tpl_list_models" model="mcp.prompt.template">
+        <field name="name">Discover Models</field>
+        <field name="category">task</field>
+        <field name="is_global">True</field>
+        <field name="sequence">50</field>
+        <field name="variables">topic</field>
+        <field name="content">List all available Odoo models related to {topic}. Show as a simple list with the model technical name and description.</field>
+        <field name="description">Discover which Odoo models exist for a business area.</field>
+    </record>
+
+    <!-- ANALYSIS — aggregate queries that produce stats/table responses -->
+
+    <record id="tpl_sales_this_month" model="mcp.prompt.template">
+        <field name="name">Sales This Month</field>
+        <field name="category">analysis</field>
+        <field name="is_global">True</field>
+        <field name="sequence">60</field>
+        <field name="variables"></field>
+        <field name="content">How many sale orders were confirmed this month? Show total order count, total revenue, and average order value as stats boxes.</field>
+        <field name="description">Quick sales summary for the current month.</field>
+    </record>
+
+    <record id="tpl_overdue_invoices" model="mcp.prompt.template">
+        <field name="name">Overdue Invoices</field>
+        <field name="category">analysis</field>
+        <field name="is_global">True</field>
+        <field name="sequence">70</field>
+        <field name="variables"></field>
+        <field name="content">Find all overdue customer invoices (account.move where move_type=out_invoice, payment_state=not_paid, invoice_date_due is before today). Show customer name, invoice number, amount due, and due date as a table sorted by due date ascending.</field>
+        <field name="description">List unpaid invoices past their due date.</field>
+    </record>
+
+    <record id="tpl_accounting_health" model="mcp.prompt.template">
+        <field name="name">Accounting Health Check</field>
+        <field name="category">analysis</field>
+        <field name="is_global">True</field>
+        <field name="sequence">80</field>
+        <field name="variables"></field>
+        <field name="content">Run an accounting health check and show any issues or discrepancies. Display the results as stat boxes with counts of issues per category.</field>
+        <field name="description">Run the built-in accounting health summary tool.</field>
+    </record>
+
+    <record id="tpl_top_products" model="mcp.prompt.template">
+        <field name="name">Top Products by Sales</field>
+        <field name="category">analysis</field>
+        <field name="is_global">True</field>
+        <field name="sequence">85</field>
+        <field name="variables">period</field>
+        <field name="content">Show the top 10 best-selling products for {period} ranked by total quantity sold. Show product name, total quantity, and total revenue as a table.</field>
+        <field name="description">Rank products by sales volume for a period.</field>
+    </record>
+
+    <!-- REPORT — chart generation using create_echart tool -->
+
+    <record id="tpl_generate_chart" model="mcp.prompt.template">
+        <field name="name">Sales by Customer Chart</field>
+        <field name="category">report</field>
+        <field name="is_global">True</field>
+        <field name="sequence">90</field>
+        <field name="variables">period</field>
+        <field name="content">Create a bar chart showing total sales amount by customer for {period}. Use sale.order data grouped by partner_id where state in (sale, done).</field>
+        <field name="description">Bar chart of revenue per customer.</field>
+    </record>
+
+    <!-- GREETING — no-variable prompts that run immediately -->
+
+    <record id="tpl_what_can_you_do" model="mcp.prompt.template">
+        <field name="name">What Can You Do?</field>
+        <field name="category">greeting</field>
+        <field name="is_global">True</field>
+        <field name="sequence">100</field>
+        <field name="variables"></field>
+        <field name="content">What can you help me with in Odoo? List your available tools and give 3 example tasks you can do right now.</field>
+        <field name="description">Ask the agent to introduce itself and list capabilities.</field>
+    </record>
+
+</odoo>

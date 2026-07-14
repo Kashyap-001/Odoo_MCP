@@ -1,23 +1,25 @@
 """
 mcp_gateway/models/mcp_webhook_trigger.py
 
-Webhook trigger model for automatically invoking agents on Odoo model events.
+Webhook trigger model for invoking agents via HTTP webhook (n8n / Zapier / cron).
 
 Key classes:
-  WebhookTrigger — Configure automatic agent calls on create/write/delete events
+  WebhookTrigger — HTTP-triggered agent calls. n8n calls Odoo's webhook URL;
+                   Odoo runs the AI agent and optionally POSTs the result back.
 
 Dependencies:
   - mcp.agent — agent to invoke
-  - mcp.tool.set — tools available in triggered session
   - mcp.session — created session record
   - Imports uuid for token generation
   - Imports jinja2 for message template rendering
 
 Developer notes:
   - Tokens are URL-safe secrets (UUIDs) for webhook endpoints
-  - Domain filters restrict which records trigger the webhook
   - Message templates use Jinja2 with {record} variable for record data
   - Triggered sessions use source='webhook' for audit trail
+  - ORM auto-trigger (create/write hooks) is NOT implemented; use n8n scheduling
+  - Inbound: n8n calls /mcp/webhook/<token>  (HTTP only)
+  - Outbound: after AI runs, Odoo POSTs result to outbound_url
 """
 
 import logging
@@ -32,18 +34,17 @@ class WebhookTrigger(models.Model):
     """
     Webhook Trigger (mcp.webhook.trigger)
 
-    Automatically invoke an AI agent when specific Odoo model events occur.
-    Useful for automated analysis, summarization, and actions.
+    HTTP-triggered AI agent calls. n8n (or any HTTP client) calls Odoo's
+    webhook URL; Odoo runs the configured agent and returns the reply.
+    Optionally POSTs the result back to an outbound URL.
 
     Relationships:
       - BelongsTo: mcp.agent via agent_id
-      - BelongsTo: mcp.tool.set via tool_set_id (optional)
 
     Business rules:
       - Token must be unique and kept secret
-      - Domain filter restricts which records trigger
-      - Message template rendered per record
-      - Only one trigger per agent per model per event (recommended)
+      - Message template rendered per record (optional — recordless calls use raw template)
+      - Triggered sessions are tagged source='webhook' for audit trail
     """
 
     _name = 'mcp.webhook.trigger'
@@ -73,35 +74,6 @@ class WebhookTrigger(models.Model):
         required=True,
         help=_('Agent to invoke'),
     )
-    tool_set_id = fields.Many2one(
-        comodel_name='mcp.tool.set',
-        string=_('Tool Set'),
-        help=_('Optional: limit tools available in triggered session'),
-    )
-    trigger_model = fields.Char(
-        string=_('Trigger Model'),
-        required=True,
-        help=_('e.g., "crm.lead", "sale.order", "account.move"'),
-    )
-    trigger_on = fields.Selection(
-        [
-            ('create', _('On Create')),
-            ('write', _('On Write')),
-            ('unlink', _('On Delete')),
-        ],
-        string=_('Trigger Event'),
-        required=True,
-        default='create',
-    )
-    trigger_fields = fields.Char(
-        string=_('Trigger Fields'),
-        help=_('For write events: only fire if these fields changed (comma-sep)'),
-    )
-    domain = fields.Text(
-        string=_('Domain Filter'),
-        default='[]',
-        help=_('JSON domain (e.g., [["country_id.code","=","US"]]). Empty = all records.'),
-    )
 
     # ── Message Template ────────────────────────────────────────────
     message_template = fields.Text(
@@ -109,6 +81,16 @@ class WebhookTrigger(models.Model):
         required=True,
         translate=True,
         help=_('Jinja2 template with {record} variable. E.g., "New lead: {record.name}"'),
+    )
+
+    # ── Outbound (Odoo → n8n/Zapier) ────────────────────────────────
+    outbound_url = fields.Char(
+        string=_('Outbound URL'),
+        help=_('Paste your n8n/Zapier webhook URL here. Odoo will POST the result to this URL after the AI runs.'),
+    )
+    outbound_secret = fields.Char(
+        string=_('Outbound Secret'),
+        help=_('Optional: sent as Authorization: Bearer <secret> header'),
     )
 
     # ── Token & Audit ───────────────────────────────────────────────
@@ -224,52 +206,75 @@ class WebhookTrigger(models.Model):
         Session is created with source='webhook' for audit trail.
 
         Args:
-            record: Odoo record that triggered this webhook
+            record: Odoo record that triggered this webhook, or None for
+                    recordless/scheduled calls (e.g. n8n cron)
 
         Returns:
             dict: Session data with reply and tokens
 
         Raises:
             UserError: if agent call fails
-
-        Developer notes:
-            - This method is called by the HTTP webhook endpoint
-            - Also called by automatic create/write/unlink hooks if enabled
-            - Session recorded with trigger_model and trigger_res_id
         """
         from ..mcp.gateway import McpGateway
 
-        if record._name != self.trigger_model:
-            raise exceptions.ValidationError(
-                _('Model mismatch: webhook trigger expects %s, got %s')
-                % (self.trigger_model, record._name)
-            )
-
         try:
-            message = self._get_message(record)
-            session = self.env['mcp.session'].create({
+            message = self._get_message(record) if record is not None else self.message_template
+            session_vals = {
                 'agent_id': self.agent_id.id,
                 'user_id': self.env.user.id,
                 'source': 'webhook',
-                'trigger_model': record._name,
-                'trigger_res_id': record.id,
-                'metadata': '{}',  # TODO: add IP, user-agent
-            })
+                'metadata': '{}',
+            }
+            if record is not None:
+                session_vals['trigger_model'] = record._name
+                session_vals['trigger_res_id'] = record.id
+            session = self.env['mcp.session'].create(session_vals)
 
             gateway = McpGateway(self.env, self.env.user)
-            result = gateway.run(
-                agent_id=self.agent_id.id,
-                user_message=message,
-                session_id=session.id,
-                active_model=record._name,
-                active_id=record.id,
-            )
+            run_kwargs = {
+                'agent_id': self.agent_id.id,
+                'user_message': message,
+                'session_id': session.id,
+            }
+            if record is not None:
+                run_kwargs['active_model'] = record._name
+                run_kwargs['active_id'] = record.id
+            result = gateway.run(**run_kwargs)
 
-            # Increment counter
             self.trigger_count += 1
             self.last_triggered = fields.Datetime.now()
+
+            if self.outbound_url:
+                self._call_outbound(record, result)
 
             return result
         except Exception as e:
             _logger.error('Webhook trigger failed: %s', str(e))
             raise UserError(_('Webhook invocation failed: %s') % str(e))
+
+    def _call_outbound(self, record, ai_result):
+        import requests as _requests
+        payload = {
+            'trigger': self.name,
+            'model': record._name if record else None,
+            'record_id': record.id if record else None,
+            'ai_reply': ai_result.get('reply', ''),
+            'session_id': ai_result.get('session_id'),
+        }
+        if record:
+            # Send basic readable fields only (skip binaries/computed)
+            safe_fields = [
+                f for f, fd in record._fields.items()
+                if not fd.compute and fd.type not in ('binary',)
+            ]
+            try:
+                payload['record_data'] = record.read(safe_fields[:20])[0]
+            except Exception:
+                pass
+        headers = {'Content-Type': 'application/json'}
+        if self.outbound_secret:
+            headers['Authorization'] = f'Bearer {self.outbound_secret}'
+        try:
+            _requests.post(self.outbound_url, json=payload, timeout=10)
+        except Exception as e:
+            _logger.warning('Outbound webhook call to %s failed: %s', self.outbound_url, e)

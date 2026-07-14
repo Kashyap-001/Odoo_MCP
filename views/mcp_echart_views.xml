@@ -6,6 +6,8 @@
         <field name="arch" type="xml">
             <list string="Charts">
                 <field name="name"/>
+                <field name="dashboard_id"/>
+                <field name="is_shared"/>
                 <field name="active"/>
             </list>
         </field>
@@ -19,6 +21,8 @@
                 <sheet>
                     <group>
                         <field name="name"/>
+                        <field name="dashboard_id"/>
+                        <field name="is_shared"/>
                         <field name="active"/>
                     </group>
                     <separator string="Data Code"/>
